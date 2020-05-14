@@ -1,0 +1,21 @@
+{
+    "type": "package",
+    "name": "MartinSStewart/elm-pdf",
+    "summary": "Generate PDF files",
+    "license": "MIT",
+    "version": "1.0.0",
+    "exposed-modules": [
+        "Pdf.Encode"
+    ],
+    "elm-version": "0.19.0 <= v < 0.20.0",
+    "dependencies": {
+        "elm/bytes": "1.0.8 <= v < 2.0.0",
+        "elm/core": "1.0.2 <= v < 2.0.0",
+        "ianmackenzie/elm-units": "2.5.0 <= v < 3.0.0",
+        "myrho/elm-round": "1.0.4 <= v < 2.0.0"
+    },
+    "test-dependencies": {
+        "elm/random": "1.0.0 <= v < 2.0.0",
+        "elm-explorations/test": "1.2.1 <= v < 2.0.0"
+    }
+}
