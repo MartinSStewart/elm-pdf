@@ -9,24 +9,68 @@ import Round
 
 pdfToString : Pdf -> String
 pdfToString pdf =
-    "%PDF-1.7\n\n"
-        ++ pdf
-        ++ """xref
-0 6
-0000000000 65535 f
-0000000010 00000 n
-0000000079 00000 n
-0000000173 00000 n
-0000000301 00000 n
-0000000380 00000 n
-trailer
-<<
-/Size 6
-/Root 1 0 R
->>
-startxref
-492
-%%EOF"""
+    let
+        info =
+            PdfDict
+                [ ( Name "Title", Text_ (Text (Pdf.title pdf)) )
+                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 2, revision = 0 }) )
+                ]
+                |> PdfDict_
+
+        catalog =
+            PdfDict
+                [ ( Name "Type", Name_ (Name "Catalog") )
+                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 2, revision = 0 }) )
+                ]
+                |> PdfDict_
+
+        pages =
+            PdfDict
+                []
+
+        content =
+            "%PDF-1.7\n\n"
+                ++ indirectObjectToString 1 0 info
+                ++ indirectObjectToString 2 0 catalog
+    in
+    content
+        ++ xRefToString (XRef [])
+        ++ String.fromInt (String.length content)
+        ++ "\n%%EOF"
+
+
+type XRef
+    = XRef (List { offset : Int, size : Int, isFree : Bool })
+
+
+xRefToString : XRef -> String
+xRefToString (XRef xRefs) =
+    let
+        xRefLine { offset, size, isFree } =
+            String.padLeft 10 '0' (String.fromInt offset)
+                ++ " "
+                ++ String.padLeft 5 '0' (String.fromInt size)
+                ++ " "
+                ++ (if isFree then
+                        "f"
+
+                    else
+                        "n"
+                   )
+                ++ "\n"
+    in
+    "xref\n"
+        ++ ("0 " ++ String.fromInt (List.length xRefs) ++ "\n")
+        ++ (List.map xRefLine xRefs |> String.concat)
+        ++ "trailer\n"
+        ++ dictionaryToString
+            (PdfDict
+                [ ( Name "Size", Int_ (List.length xRefs) )
+                , ( Name "Info", IndirectReference_ (IndirectReference { index = 1, revision = 0 }) )
+                , ( Name "Root", IndirectReference_ (IndirectReference { index = 2, revision = 0 }) )
+                ]
+            )
+        ++ "startxref\n"
 
 
 type Name
@@ -41,6 +85,7 @@ type Object
     | PdfArray_ PdfArray
     | Text_ Text
     | Stream_ Stream
+    | IndirectReference_ IndirectReference
 
 
 objectToString : Object -> String
@@ -66,6 +111,9 @@ objectToString object =
 
         Stream_ stream ->
             streamToString stream
+
+        IndirectReference_ indirectReference ->
+            indirectReferenceToString indirectReference
 
 
 nameToString : Name -> String
@@ -104,6 +152,15 @@ indirectObjectToString index revision object =
         ++ " obj\n"
         ++ objectToString object
         ++ "\nendobject"
+
+
+type IndirectReference
+    = IndirectReference { index : Int, revision : Int }
+
+
+indirectReferenceToString : IndirectReference -> String
+indirectReferenceToString (IndirectReference { index, revision }) =
+    String.fromInt index ++ " " ++ String.fromInt revision ++ " R"
 
 
 type StreamContent
