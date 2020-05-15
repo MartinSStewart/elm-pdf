@@ -2,6 +2,7 @@ module Pdf.Encode exposing (encode)
 
 import Bytes exposing (Bytes)
 import Bytes.Encode
+import Length exposing (Length)
 import Pdf exposing (Pdf)
 import Round
 
@@ -12,13 +13,11 @@ encode pdf =
 
 
 type Tag
-    = Tag { name : String, contents : Maybe String }
+    = Tag { name : String, contents : List TagContents }
 
-
-tag : String -> Tag
-tag name =
-    Tag { name = name, contents = Nothing }
-
+type TagContents =
+    TagArray PdfArray
+    |
 
 tagToString : Tag -> String
 tagToString (Tag { name, contents }) =
@@ -121,3 +120,8 @@ floatToString (PdfFloat float_) =
 array : List Float -> PdfArray
 array floats =
     List.map float floats |> PdfArray
+
+
+mediaBoxTag : { width : Length, height : Length } -> Tag
+mediaBoxTag { width, height } =
+    Tag { name = "MediaBox", contents = PdfArray [ 0, 0, PdfFloat (Length.inPoints width), PdfFloat (Length.inPoints height) ] }
