@@ -1,4 +1,4 @@
-module Pdf.Encode exposing (encode)
+module Pdf.Encode exposing (pdfToString)
 
 import Bytes exposing (Bytes)
 import Bytes.Encode
@@ -7,79 +7,116 @@ import Pdf exposing (Pdf)
 import Round
 
 
-encode : Pdf -> String
-encode pdf =
-    ""
+pdfToString : Pdf -> String
+pdfToString pdf =
+    "%PDF-1.7\n\n"
+        ++ pdf
+        ++ """xref
+0 6
+0000000000 65535 f
+0000000010 00000 n
+0000000079 00000 n
+0000000173 00000 n
+0000000301 00000 n
+0000000380 00000 n
+trailer
+<<
+/Size 6
+/Root 1 0 R
+>>
+startxref
+492
+%%EOF"""
 
 
-type Tag
-    = Tag { name : String, contents : List TagContents }
-
-type TagContents =
-    TagArray PdfArray
-    |
-
-tagToString : Tag -> String
-tagToString (Tag { name, contents }) =
-    case contents of
-        Just contents_ ->
-            "/" ++ name ++ " " ++ contents_
-
-        Nothing ->
-            "/" ++ name
-
-
-type PdfDict
-    = PdfDict (List Tag) (List PdfDict)
-
-
-dictionary : List Tag -> List PdfDict -> PdfDict
-dictionary tags subdictionaries =
-    PdfDict tags subdictionaries
-
-
-dictionaryToString : PdfDict -> String
-dictionaryToString (PdfDict tags dictionaries) =
-    let
-        tagsText =
-            List.map tagToString tags |> List.intersperse " " |> String.concat
-
-        subdictionariesText =
-            List.map dictionaryToString dictionaries |> List.intersperse " " |> String.concat
-    in
-    "<<" ++ tagsText ++ " " ++ subdictionariesText ++ ">>"
+type Name
+    = Name String
 
 
 type Object
-    = Object PdfDict (Maybe Stream)
+    = Name_ Name
+    | Float_ Float
+    | Int_ Int
+    | PdfDict_ PdfDict
+    | PdfArray_ PdfArray
+    | Text_ Text
+    | Stream_ Stream
 
 
-object : PdfDict -> Maybe Stream -> Object
-object dict stream =
-    Object dict stream
+objectToString : Object -> String
+objectToString object =
+    case object of
+        Name_ name ->
+            nameToString name
+
+        Float_ float ->
+            floatToString float
+
+        Int_ int ->
+            String.fromInt int
+
+        PdfDict_ pdfDict ->
+            dictionaryToString pdfDict
+
+        PdfArray_ pdfArray ->
+            arrayToString pdfArray
+
+        Text_ text_ ->
+            textToString text_
+
+        Stream_ stream ->
+            streamToString stream
 
 
-objectToString : Int -> Object -> String
-objectToString index (Object dict stream) =
+nameToString : Name -> String
+nameToString (Name name) =
+    "/" ++ name
+
+
+type PdfDict
+    = PdfDict (List ( Name, Object ))
+
+
+dictionaryToString : PdfDict -> String
+dictionaryToString (PdfDict keyValues) =
     let
-        streamText =
-            case stream of
-                Just stream_ ->
-                    "\n" ++ streamToString stream_
-
-                Nothing ->
-                    ""
+        contentText =
+            keyValues
+                |> List.map (\( key, value ) -> nameToString key ++ " " ++ objectToString value)
+                |> String.concat
     in
-    String.fromInt index ++ " 0 obj\n" ++ dictionaryToString dict ++ streamText ++ "\nendobject"
+    "<<" ++ contentText ++ ">>"
 
 
 type Stream
-    = Stream String
+    = Stream PdfDict StreamContent
+
+
+type IndirectObject
+    = IndirectObject
+
+
+indirectObjectToString : Int -> Int -> Object -> String
+indirectObjectToString index revision object =
+    String.fromInt index
+        ++ " "
+        ++ String.fromInt revision
+        ++ " obj\n"
+        ++ objectToString object
+        ++ "\nendobject"
+
+
+type StreamContent
+    = StreamContent String
 
 
 streamToString : Stream -> String
-streamToString (Stream a) =
-    "stream " ++ a ++ "endstream"
+streamToString (Stream (PdfDict dict) (StreamContent content)) =
+    let
+        dict2 =
+            ( Name "Length", Int_ (String.length content + 2) ) :: dict |> PdfDict
+    in
+    dictionaryToString dict2 ++ " stream " ++ content ++ " endstream"
 
 
 type Text
@@ -101,27 +138,24 @@ textToString (Text text_) =
 
 
 type PdfArray
-    = PdfArray (List PdfFloat)
+    = PdfArray (List Object)
 
 
-type PdfFloat
-    = PdfFloat Float
+arrayToString : PdfArray -> String
+arrayToString (PdfArray content) =
+    let
+        contentText =
+            List.map objectToString content |> List.intersperse " " |> String.concat
+    in
+    "[ " ++ contentText ++ " ]"
 
 
-float float_ =
-    PdfFloat float_
+floatToString : Float -> String
+floatToString =
+    Round.round 5
 
 
-floatToString : PdfFloat -> String
-floatToString (PdfFloat float_) =
-    Round.round 5 float_
 
-
-array : List Float -> PdfArray
-array floats =
-    List.map float floats |> PdfArray
-
-
-mediaBoxTag : { width : Length, height : Length } -> Tag
-mediaBoxTag { width, height } =
-    Tag { name = "MediaBox", contents = PdfArray [ 0, 0, PdfFloat (Length.inPoints width), PdfFloat (Length.inPoints height) ] }
+--mediaBoxTag : { width : Length, height : Length } -> Name
+--mediaBoxTag { width, height } =
+--    Name { name = "MediaBox", contents = PdfArray [ Float_ 0, Float_ 0, Float_ (Length.inPoints width), Float_ (Length.inPoints height) ] |> PdfArray_ }
