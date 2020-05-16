@@ -78,7 +78,12 @@ encode pdf =
                 |> PdfDict_
 
         allPages =
-            pages pdf |> List.map
+            pages pdf
+                |> List.map
+                    (\(Page pageSize pageText) ->
+                        PdfDict [ ( Name "Type", Name_ (Name "Page") ), mediaBox pageSize ]
+                            |> PdfDict_
+                    )
 
         pages_ =
             PdfDict
@@ -104,17 +109,26 @@ encode pdf =
                     ( "%PDF-1.7\n", [], 1 )
     in
     content
-        ++ xRefToString (XRef (List.reverse xRef))
+        ++ xRefToString 1 2 (XRef (List.reverse xRef))
         ++ String.fromInt (String.length content)
         ++ "\n%%EOF"
+
+
+mediaBox : Vector2d units coordinates -> ( Name, Object )
+mediaBox size =
+    let
+        ( w, h ) =
+            Vector2d.toTuple Length.inPoints size
+    in
+    ( Name "MediaBox", PdfArray_ (PdfArray [ Int_ 0, Int_ 0, Float_ w, Float_ h ]) )
 
 
 type XRef
     = XRef (List { offset : Int, size : Int })
 
 
-xRefToString : XRef -> String
-xRefToString (XRef xRefs) =
+xRefToString : Int -> Int -> XRef -> String
+xRefToString infoIndex rootIndex (XRef xRefs) =
     let
         xRefLine { offset, size } =
             String.padLeft 10 '0' (String.fromInt offset)
@@ -130,8 +144,8 @@ xRefToString (XRef xRefs) =
         ++ dictionaryToString
             (PdfDict
                 [ ( Name "Size", Int_ (List.length xRefs) )
-                , ( Name "Info", IndirectReference_ (IndirectReference { index = 1, revision = 0 }) )
-                , ( Name "Root", IndirectReference_ (IndirectReference { index = 2, revision = 0 }) )
+                , ( Name "Info", IndirectReference_ (IndirectReference { index = infoIndex, revision = 0 }) )
+                , ( Name "Root", IndirectReference_ (IndirectReference { index = rootIndex, revision = 0 }) )
                 ]
             )
         ++ "\nstartxref\n"
