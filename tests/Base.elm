@@ -1,7 +1,8 @@
 module Base exposing (tests)
 
 import Expect exposing (Expectation)
-import Pdf.Encode
+import Length
+import Pdf
 import Test exposing (Test, describe, test)
 
 
@@ -73,5 +74,11 @@ startxref
 534
 %%EOF"""
                 in
-                Pdf.Encode.encode (Pdf.Encode.init "test") |> Expect.equal expected
+                Pdf.encode
+                    (Pdf.init
+                        "test"
+                        (Pdf.page { width = Length.points 100, height = Length.points 200 })
+                    )
+                    |> Debug.log "a"
+                    |> Expect.equal expected
         ]
