@@ -1,8 +1,9 @@
-module Pdf exposing (Page, Pdf, addPage, addPages, encode, init, page, pages, title)
+module Pdf exposing (Page, Pdf, TextBox, addPage, addPages, encode, init, page, pages, title)
 
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
 import Round
+import Vector2d exposing (Vector2d)
 
 
 type PageCoordinates
@@ -10,11 +11,11 @@ type PageCoordinates
 
 
 type Pdf
-    = Pdf { firstPage : Page, restOfPages : List Page, title : String }
+    = Pdf { title : String, firstPage : Page, restOfPages : List Page }
 
 
 type Page
-    = Page { width : Length, height : Length, text : List TextBox }
+    = Page (Vector2d Meters PageCoordinates) (List TextBox)
 
 
 type TextBox
@@ -25,14 +26,18 @@ type TextBox
         }
 
 
-page : { width : Length, height : Length } -> Page
-page { width, height } =
-    Page { width = width, height = height, text = [] }
+page : Vector2d Meters PageCoordinates -> List TextBox -> Page
+page =
+    Page
 
 
-init : String -> Page -> Pdf
-init title_ firstPage =
-    Pdf { title = title_, firstPage = firstPage, restOfPages = [] }
+init : { title : String, firstPage : Page } -> Pdf
+init record =
+    Pdf
+        { title = record.title
+        , firstPage = record.firstPage
+        , restOfPages = []
+        }
 
 
 addPage : Page -> Pdf -> Pdf
@@ -68,12 +73,23 @@ encode pdf =
         catalog =
             PdfDict
                 [ ( Name "Type", Name_ (Name "Catalog") )
-                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 2, revision = 0 }) )
+                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 3, revision = 0 }) )
+                ]
+                |> PdfDict_
+
+        allPages =
+            pages pdf |> List.map
+
+        pages_ =
+            PdfDict
+                [ ( Name "Kids", PdfArray_ (PdfArray [ IndirectReference_ (IndirectReference { index = 0, revision = 0 }) ]) )
+                , ( Name "Count", Int_ (List.length allPages) )
+                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 3, revision = 0 }) )
                 ]
                 |> PdfDict_
 
         ( content, xRef, _ ) =
-            [ info, catalog ]
+            [ info, catalog, pages_ ]
                 |> List.foldl
                     (\object ( content_, xRef_, index ) ->
                         let

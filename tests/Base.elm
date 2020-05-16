@@ -4,6 +4,7 @@ import Expect exposing (Expectation)
 import Length
 import Pdf
 import Test exposing (Test, describe, test)
+import Vector2d
 
 
 tests =
@@ -76,8 +77,9 @@ startxref
                 in
                 Pdf.encode
                     (Pdf.init
-                        "test"
-                        (Pdf.page { width = Length.points 100, height = Length.points 200 })
+                        { title = "test"
+                        , firstPage = Pdf.page (Vector2d.fromTuple Length.points ( 100, 100 )) []
+                        }
                     )
                     |> Debug.log "a"
                     |> Expect.equal expected
