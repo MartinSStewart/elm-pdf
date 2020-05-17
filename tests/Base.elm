@@ -14,66 +14,43 @@ tests =
             \_ ->
                 let
                     expected =
-                        """%PDF-1.4
-1 0 obj
-<< /Title (Hallo Welt) >>
+                        String.replace "\u{000D}\n"
+                            "\n"
+                            """%PDF-1.4
+1 0 obj  % entry point
+<< /Title (test) >>
 endobj
 2 0 obj
-<< /Type /Catalog
-   /Pages 3 0 R
->>
+<< /Type /Catalog /Pages 3 0 R >>
 endobj
 3 0 obj
-<< /Type /Pages
-   /MediaBox [0 0 595 842]
-   /Resources
-   << /Font << /F1 4 0 R >>
-      /ProcSet [/PDF /Text]
-   >>
-   /Kids [5 0 R]
-   /Count 1
->>
+<< /Kids [ 5 0 R 6 0 R ] /Count 1 /Type /Pages /Resources << /Font << /F1 4 0 R >> /PRocSet [ /PDF /Text ] >> >>
 endobj
 4 0 obj
-<< /Type /Font
-   /Subtype /Type1
-   /BaseFont /Helvetica
-   /Encoding /WinAnsiEncoding
->>
+<< /Type /Page /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
 endobj
 5 0 obj
-<< /Type /Page
-   /Parent 3 0 R
-   /Contents 6 0 R
->>
+<< /Type /Page /MediaBox [ 0 0 1100.00000 100.00000 ] /Parent 3 0 R /Contents 6 0 R >>
 endobj
 6 0 obj
-<< /Length 41
->>
+<< /Length 114 >>
 stream
-/F1 48 Tf
-BT
-72 746 Td
-(Hallo Welt) Tj
-ET
+BT /F1 36.00000 Tf 10.00000 30.00000 Td (If you can read this then it's possible to encode PDFs with Elm!) Tj ET
 endstream
 endobj
 xref
 0 7
 0000000000 65535 f
-0000000009 00000 n
-0000000050 00000 n
-0000000102 00000 n
-0000000268 00000 n
-0000000374 00000 n
-0000000443 00000 n
+0000000009 00049 n
+0000000059 00048 n
+0000000108 00127 n
+0000000236 00096 n
+0000000333 00101 n
+0000000435 00162 n
 trailer
-<< /Size 7
-   /Info 1 0 R
-   /Root 2 0 R
->>
+<< /Size 7 /Info 1 0 R /Root 2 0 R >>
 startxref
-534
+598
 %%EOF"""
                 in
                 Pdf.encode

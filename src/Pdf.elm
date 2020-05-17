@@ -92,7 +92,7 @@ encode pdf =
 
         info : IndirectObject
         info =
-            indirectObject
+            entryPoint
                 infoIndirectReference
                 (PdfDict [ ( "Title", Text (title pdf) ) ])
 
@@ -200,14 +200,17 @@ encode pdf =
                         ++ " "
                         ++ String.padLeft 5 '0' (String.fromInt size)
                         ++ " n\n"
+
+                xRefCount =
+                    List.length xRefs + 1
             in
             "xref\n"
-                ++ ("0 " ++ String.fromInt (List.length xRefs + 1) ++ "\n")
+                ++ ("0 " ++ String.fromInt xRefCount ++ "\n")
                 ++ "0000000000 65535 f\n"
                 ++ (List.map xRefLine xRefs |> String.concat)
                 ++ "trailer\n"
                 ++ pdfDictToString
-                    [ ( "Size", PdfInt (List.length xRefs) )
+                    [ ( "Size", PdfInt xRefCount )
                     , ( "Info", IndirectReference infoIndirectReference )
                     , ( "Root", IndirectReference catalogIndirectReference )
                     ]
@@ -314,12 +317,17 @@ type alias IndirectReference_ =
 
 
 type IndirectObject
-    = IndirectObject { index : Int, revision : Int, object : Object }
+    = IndirectObject { index : Int, revision : Int, isEntryPoint : Bool, object : Object }
 
 
 indirectObject : IndirectReference_ -> Object -> IndirectObject
 indirectObject { index, revision } object =
-    IndirectObject { index = index, revision = revision, object = object }
+    IndirectObject { index = index, revision = revision, isEntryPoint = False, object = object }
+
+
+entryPoint : IndirectReference_ -> Object -> IndirectObject
+entryPoint { index, revision } object =
+    IndirectObject { index = index, revision = revision, isEntryPoint = True, object = object }
 
 
 indirectObjectToIndirectReference : IndirectObject -> IndirectReference_
@@ -328,11 +336,17 @@ indirectObjectToIndirectReference (IndirectObject { index, revision }) =
 
 
 indirectObjectToString : IndirectObject -> String
-indirectObjectToString (IndirectObject { index, revision, object }) =
+indirectObjectToString (IndirectObject { index, revision, isEntryPoint, object }) =
     String.fromInt index
         ++ " "
         ++ String.fromInt revision
-        ++ " obj\n"
+        ++ " obj"
+        ++ (if isEntryPoint then
+                "  % entry point\n"
+
+            else
+                "\n"
+           )
         ++ objectToString object
         ++ "\nendobj"
 
