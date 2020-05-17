@@ -1,5 +1,8 @@
 module Base exposing (tests)
 
+import Bytes
+import Bytes.Decode as BD
+import Bytes.Encode as BE
 import Expect exposing (Expectation)
 import Length
 import Pdf
@@ -13,6 +16,7 @@ tests =
         [ test "Single page PDF" <|
             \_ ->
                 let
+                    expected : String
                     expected =
                         String.replace "\u{000D}\n"
                             "\n"
@@ -53,22 +57,26 @@ startxref
 592
 %%EOF"""
                 in
-                Pdf.encode
-                    (Pdf.pdf
-                        "test"
-                        [ Pdf.page
-                            (Vector2d.fromTuple Length.points ( 1100, 100 ))
+                Pdf.pdf
+                    "test"
+                    [ Pdf.page
+                        { size = Vector2d.fromTuple Length.points ( 1100, 100 )
+                        , contents =
                             [ Pdf.textBox
                                 (Length.points 30)
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
                             ]
-                        ]
-                    )
-                    |> Expect.equal expected
+                        }
+                    ]
+                    |> Pdf.encoder
+                    |> BE.encode
+                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
+                    |> Expect.equal (Just expected)
         , test "Two page PDF" <|
             \_ ->
                 let
+                    expected : String
                     expected =
                         String.replace "\u{000D}\n"
                             "\n"
@@ -120,29 +128,35 @@ startxref
 817
 %%EOF"""
                 in
-                Pdf.encode
-                    (Pdf.pdf
-                        "Two pages"
-                        [ Pdf.page
-                            (Vector2d.fromTuple Length.points ( 1100, 100 ))
+                Pdf.pdf
+                    "Two pages"
+                    [ Pdf.page
+                        { size = Vector2d.fromTuple Length.points ( 1100, 100 )
+                        , contents =
                             [ Pdf.textBox
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
                             ]
-                        , Pdf.page
-                            (Vector2d.fromTuple Length.points ( 400, 100 ))
+                        }
+                    , Pdf.page
+                        { size = Vector2d.fromTuple Length.points ( 400, 100 )
+                        , contents =
                             [ Pdf.textBox
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 40, 30 ))
                                 "The second page"
                             ]
-                        ]
-                    )
-                    |> Expect.equal expected
+                        }
+                    ]
+                    |> Pdf.encoder
+                    |> BE.encode
+                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
+                    |> Expect.equal (Just expected)
         , test "Text containing line breaks" <|
             \_ ->
                 let
+                    expected : String
                     expected =
                         String.replace "\u{000D}\n"
                             "\n"
@@ -183,17 +197,20 @@ startxref
 665
 %%EOF"""
                 in
-                Pdf.encode
-                    (Pdf.pdf
-                        "Multiline text"
-                        [ Pdf.page
-                            (Vector2d.fromTuple Length.points ( 700, 400 ))
+                Pdf.pdf
+                    "Multiline text"
+                    [ Pdf.page
+                        { size = Vector2d.fromTuple Length.points ( 700, 400 )
+                        , contents =
                             [ Pdf.textBox
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 10, 300 ))
                                 "If you can read this then\n it's\n\n possible to encode PDFs with Elm!"
                             ]
-                        ]
-                    )
-                    |> Expect.equal expected
+                        }
+                    ]
+                    |> Pdf.encoder
+                    |> BE.encode
+                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
+                    |> Expect.equal (Just expected)
         ]

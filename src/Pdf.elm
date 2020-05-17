@@ -1,4 +1,7 @@
-module Pdf exposing (pdf, page, textBox, encode, Pdf, Page, Item, PageCoordinates)
+module Pdf exposing
+    ( pdf, page, textBox, Pdf, Page, Item, PageCoordinates
+    , encoder
+    )
 
 {-| In order to use this package you'll need to install [`ianmackenzie/elm-geometry`](https://package.elm-lang.org/packages/ianmackenzie/elm-geometry/latest/) and [`ianmackenzie/elm-units`](https://package.elm-lang.org/packages/ianmackenzie/elm-units/latest/).
 
@@ -6,6 +9,8 @@ module Pdf exposing (pdf, page, textBox, encode, Pdf, Page, Item, PageCoordinate
 
 -}
 
+import Bytes exposing (Bytes)
+import Bytes.Encode as BE
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
 import Quantity
@@ -71,8 +76,8 @@ pages (Pdf pdf_) =
 --- ENCODE ---
 
 
-encode : Pdf -> String
-encode pdf_ =
+encoder : Pdf -> BE.Encoder
+encoder pdf_ =
     let
         infoIndirectReference =
             { index = 1, revision = 0 }
@@ -142,7 +147,7 @@ encode pdf_ =
 
                             streamContent =
                                 List.foldl
-                                    (\(TextBox { position, maxWidth, text, fontSize }) previous ->
+                                    (\(TextBox { position, text, fontSize }) previous ->
                                         let
                                             ( x, y ) =
                                                 Point2d.toTuple Length.inPoints position
@@ -179,6 +184,8 @@ encode pdf_ =
                                     ""
                                     pageText
                                     |> (\a -> "BT" ++ a ++ " ET")
+                                    |> BE.string
+                                    |> BE.encode
                         in
                         { page =
                             indirectObject
@@ -197,23 +204,15 @@ encode pdf_ =
                         }
                     )
 
-        ( content, xRef, _ ) =
-            (info :: catalog :: pageRoot :: font :: List.concatMap (\a -> [ a.page, a.content ]) allPages)
-                |> List.sortBy indirectObjectIndex
-                |> List.foldl
-                    (\indirectObject_ ( content_, xRef_, index ) ->
-                        let
-                            text_ =
-                                indirectObjectToString indirectObject_
-                        in
-                        ( content_ ++ text_ ++ "\n"
-                        , { offset = String.length content_, size = String.length text_ } :: xRef_
-                        , index + 1
-                        )
-                    )
-                    ( "%PDF-" ++ pdfVersion ++ "\n", [], 1 )
+        ( content, xRef ) =
+            info
+                :: catalog
+                :: pageRoot
+                :: font
+                :: List.concatMap (\a -> [ a.page, a.content ]) allPages
+                |> contentToBytes
 
-        xRefToString : XRef -> String
+        xRefToString : XRef -> BE.Encoder
         xRefToString (XRef xRefs) =
             let
                 xRefLine { offset, size } =
@@ -225,22 +224,46 @@ encode pdf_ =
                 xRefCount =
                     List.length xRefs + 1
             in
-            "xref\n"
-                ++ ("0 " ++ String.fromInt xRefCount ++ "\n")
-                ++ "0000000000 65535 f\n"
-                ++ (List.map xRefLine xRefs |> String.concat)
-                ++ "trailer\n"
-                ++ pdfDictToString
+            BE.sequence
+                [ "xref\n"
+                    ++ ("0 " ++ String.fromInt xRefCount ++ "\n")
+                    ++ "0000000000 65535 f\n"
+                    ++ (List.map xRefLine xRefs |> String.concat)
+                    ++ "trailer\n"
+                    |> BE.string
+                , pdfDictToString
                     [ ( "Size", PdfInt xRefCount )
                     , ( "Info", IndirectReference infoIndirectReference )
                     , ( "Root", IndirectReference catalogIndirectReference )
                     ]
-                ++ "\nstartxref\n"
+                , BE.string "\nstartxref\n"
+                ]
     in
-    content
-        ++ xRefToString (XRef (List.reverse xRef))
-        ++ String.fromInt (String.length content)
-        ++ "\n%%EOF"
+    BE.sequence
+        [ BE.bytes content
+        , xRefToString (XRef xRef)
+        , String.fromInt (Bytes.width content) |> BE.string
+        , BE.string "\n%%EOF"
+        ]
+
+
+contentToBytes : List IndirectObject -> ( Bytes, List { offset : Int, size : Int } )
+contentToBytes =
+    List.sortBy indirectObjectIndex
+        >> List.foldl
+            (\indirectObject_ ( content_, xRef_, index ) ->
+                let
+                    bytes : Bytes
+                    bytes =
+                        indirectObjectToString indirectObject_ |> BE.encode
+                in
+                ( BE.sequence [ BE.bytes content_, BE.bytes bytes, BE.string "\n" ] |> BE.encode
+                , { offset = Bytes.width content_, size = Bytes.width bytes } :: xRef_
+                , index + 1
+                )
+            )
+            ( "%PDF-" ++ pdfVersion ++ "\n" |> BE.string |> BE.encode, [], 1 )
+        >> (\( content, xRef, _ ) -> ( content, List.reverse xRef ))
 
 
 pdfVersion =
@@ -271,17 +294,17 @@ type Object
     | IndirectReference IndirectReference_
 
 
-objectToString : Object -> String
+objectToString : Object -> BE.Encoder
 objectToString object =
     case object of
         Name name ->
-            nameToString name
+            nameToString name |> BE.string
 
         PdfFloat float ->
-            floatToString float
+            floatToString float |> BE.string
 
         PdfInt int ->
-            String.fromInt int
+            String.fromInt int |> BE.string
 
         PdfDict pdfDict ->
             pdfDictToString pdfDict
@@ -289,22 +312,27 @@ objectToString object =
         PdfArray pdfArray ->
             let
                 contentText =
-                    List.map objectToString pdfArray |> List.intersperse " " |> String.concat
+                    List.map objectToString pdfArray |> List.intersperse (BE.string " ")
             in
-            "[ " ++ contentText ++ " ]"
+            BE.string "[ " :: contentText ++ [ BE.string " ]" ] |> BE.sequence
 
         Text text_ ->
-            textToString text_
+            textToString text_ |> BE.string
 
         Stream dict (StreamContent content) ->
             let
                 dict2 =
-                    ( "Length", PdfInt (String.length content + 2) ) :: dict
+                    ( "Length", PdfInt (Bytes.width content + 2) ) :: dict
             in
-            pdfDictToString dict2 ++ "\nstream\n" ++ content ++ "\nendstream"
+            BE.sequence
+                [ pdfDictToString dict2
+                , BE.string "\nstream\n"
+                , BE.bytes content
+                , BE.string "\nendstream"
+                ]
 
         IndirectReference { index, revision } ->
-            String.fromInt index ++ " " ++ String.fromInt revision ++ " R"
+            String.fromInt index ++ " " ++ String.fromInt revision ++ " R" |> BE.string
 
 
 textToString : String -> String
@@ -325,12 +353,12 @@ nameToString name =
     "/" ++ name
 
 
-pdfDictToString : List ( String, Object ) -> String
+pdfDictToString : List ( String, Object ) -> BE.Encoder
 pdfDictToString =
-    List.map (\( key, value ) -> nameToString key ++ " " ++ objectToString value)
-        >> List.intersperse " "
-        >> String.concat
-        >> (\a -> "<< " ++ a ++ " >>")
+    List.map (\( key, value ) -> BE.sequence [ BE.string (nameToString key ++ " "), objectToString value ])
+        >> List.intersperse (BE.string " ")
+        >> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
+        >> BE.sequence
 
 
 type alias IndirectReference_ =
@@ -356,20 +384,23 @@ indirectObjectToIndirectReference (IndirectObject { index, revision }) =
     { index = index, revision = revision }
 
 
-indirectObjectToString : IndirectObject -> String
+indirectObjectToString : IndirectObject -> BE.Encoder
 indirectObjectToString (IndirectObject { index, revision, isEntryPoint, object }) =
-    String.fromInt index
-        ++ " "
-        ++ String.fromInt revision
-        ++ " obj"
-        ++ (if isEntryPoint then
-                "  % entry point\n"
+    BE.sequence
+        [ String.fromInt index
+            ++ " "
+            ++ String.fromInt revision
+            ++ " obj"
+            ++ (if isEntryPoint then
+                    "  % entry point\n"
 
-            else
-                "\n"
-           )
-        ++ objectToString object
-        ++ "\nendobj"
+                else
+                    "\n"
+               )
+            |> BE.string
+        , objectToString object
+        , BE.string "\nendobj"
+        ]
 
 
 indirectObjectIndex : IndirectObject -> Int
@@ -378,7 +409,7 @@ indirectObjectIndex (IndirectObject { index }) =
 
 
 type StreamContent
-    = StreamContent String
+    = StreamContent Bytes
 
 
 floatToString : Float -> String
