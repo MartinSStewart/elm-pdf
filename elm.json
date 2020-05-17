@@ -1,7 +1,7 @@
 {
     "type": "package",
     "name": "MartinSStewart/elm-pdf",
-    "summary": "Generate PDF files",
+    "summary": "Generate PDFs",
     "license": "MIT",
     "version": "1.0.0",
     "exposed-modules": [

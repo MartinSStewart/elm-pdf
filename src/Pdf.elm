@@ -1,4 +1,10 @@
-module Pdf exposing (Page, Pdf, TextBox, encode, page, pages, pdf, textBox, title)
+module Pdf exposing (pdf, page, textBox, encode, Pdf, Page, Item, PageCoordinates)
+
+{-| In order to use this package you'll need to install [`ianmackenzie/elm-geometry`](https://package.elm-lang.org/packages/ianmackenzie/elm-geometry/latest/) and [`ianmackenzie/elm-units`](https://package.elm-lang.org/packages/ianmackenzie/elm-units/latest/).
+
+@docs pdf, page, textBox, encode, Pdf, Page, Item, PageCoordinates
+
+-}
 
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
@@ -7,6 +13,8 @@ import Round
 import Vector2d exposing (Vector2d)
 
 
+{-| The coordinate system used when placing things on a page.
+-}
 type PageCoordinates
     = PageCoordinates Never
 
@@ -16,31 +24,29 @@ type Pdf
 
 
 type Page
-    = Page (Vector2d Meters PageCoordinates) (List TextBox)
+    = Page (Vector2d Meters PageCoordinates) (List Item)
 
 
-type TextBox
+type Item
     = TextBox
         { position : Point2d Meters PageCoordinates
-        , maxWidth : Maybe Length
         , text : String
         , fontSize : Length
         }
 
 
-textBox : Length -> Maybe Length -> Point2d Meters PageCoordinates -> String -> TextBox
-textBox fontSize maxWidth position text =
+textBox : Length -> Point2d Meters PageCoordinates -> String -> Item
+textBox fontSize position text =
     TextBox
         { position = position
-        , maxWidth = maxWidth
         , text = text
         , fontSize = fontSize
         }
 
 
-page : Vector2d Meters PageCoordinates -> List TextBox -> Page
-page =
-    Page
+page : { size : Vector2d Meters PageCoordinates, contents : List Item } -> Page
+page { size, contents } =
+    Page size contents
 
 
 pdf : String -> List Page -> Pdf

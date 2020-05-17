@@ -35,7 +35,7 @@ endobj
 6 0 obj
 << /Length 114 >>
 stream
-BT /F1 36.00000 Tf 10.00000 30.00000 Td (If you can read this then it's possible to encode PDFs with Elm!) Tj ET
+BT /F1 30.00000 Tf 10.00000 30.00000 Td (If you can read this then it's possible to encode PDFs with Elm!) Tj ET
 endstream
 endobj
 xref
@@ -59,8 +59,7 @@ startxref
                         [ Pdf.page
                             (Vector2d.fromTuple Length.points ( 1100, 100 ))
                             [ Pdf.textBox
-                                (Length.points 36)
-                                Nothing
+                                (Length.points 30)
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
                             ]
@@ -128,7 +127,6 @@ startxref
                             (Vector2d.fromTuple Length.points ( 1100, 100 ))
                             [ Pdf.textBox
                                 (Length.points 36)
-                                Nothing
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
                             ]
@@ -136,7 +134,6 @@ startxref
                             (Vector2d.fromTuple Length.points ( 400, 100 ))
                             [ Pdf.textBox
                                 (Length.points 36)
-                                Nothing
                                 (Point2d.fromTuple Length.points ( 40, 30 ))
                                 "The second page"
                             ]
@@ -163,7 +160,7 @@ endobj
 << /Type /Page /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
 endobj
 5 0 obj
-<< /Type /Page /MediaBox [ 0 0 500.00000 400.00000 ] /Parent 3 0 R /Contents 6 0 R >>
+<< /Type /Page /MediaBox [ 0 0 700.00000 400.00000 ] /Parent 3 0 R /Contents 6 0 R >>
 endobj
 6 0 obj
 << /Length 178 >>
@@ -190,10 +187,9 @@ startxref
                     (Pdf.pdf
                         "Multiline text"
                         [ Pdf.page
-                            (Vector2d.fromTuple Length.points ( 500, 400 ))
+                            (Vector2d.fromTuple Length.points ( 700, 400 ))
                             [ Pdf.textBox
                                 (Length.points 36)
-                                Nothing
                                 (Point2d.fromTuple Length.points ( 10, 300 ))
                                 "If you can read this then\n it's\n\n possible to encode PDFs with Elm!"
                             ]
