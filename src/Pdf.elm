@@ -1,7 +1,8 @@
-module Pdf exposing (Page, Pdf, TextBox, addPage, addPages, encode, init, page, pages, textBox, title)
+module Pdf exposing (Page, Pdf, TextBox, encode, page, pages, pdf, textBox, title)
 
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
+import Quantity
 import Round
 import Vector2d exposing (Vector2d)
 
@@ -11,7 +12,7 @@ type PageCoordinates
 
 
 type Pdf
-    = Pdf { title : String, firstPage : Page, restOfPages : List Page }
+    = Pdf { title : String, pages : List Page }
 
 
 type Page
@@ -42,33 +43,22 @@ page =
     Page
 
 
-init : { title : String, firstPage : Page } -> Pdf
-init record =
+pdf : String -> List Page -> Pdf
+pdf title_ pages_ =
     Pdf
-        { title = record.title
-        , firstPage = record.firstPage
-        , restOfPages = []
+        { title = title_
+        , pages = pages_
         }
 
 
-addPage : Page -> Pdf -> Pdf
-addPage page_ (Pdf pdf) =
-    Pdf { pdf | restOfPages = pdf.restOfPages ++ [ page_ ] }
-
-
-addPages : List Page -> Pdf -> Pdf
-addPages pages_ (Pdf pdf) =
-    Pdf { pdf | restOfPages = pdf.restOfPages ++ pages_ }
-
-
 title : Pdf -> String
-title (Pdf pdf) =
-    pdf.title
+title (Pdf pdf_) =
+    pdf_.title
 
 
 pages : Pdf -> List Page
-pages (Pdf pdf) =
-    pdf.firstPage :: pdf.restOfPages
+pages (Pdf pdf_) =
+    pdf_.pages
 
 
 
@@ -76,7 +66,7 @@ pages (Pdf pdf) =
 
 
 encode : Pdf -> String
-encode pdf =
+encode pdf_ =
     let
         infoIndirectReference =
             { index = 1, revision = 0 }
@@ -94,7 +84,7 @@ encode pdf =
         info =
             entryPoint
                 infoIndirectReference
-                (PdfDict [ ( "Title", Text (title pdf) ) ])
+                (PdfDict [ ( "Title", Text (title pdf_) ) ])
 
         catalog : IndirectObject
         catalog =
@@ -108,10 +98,10 @@ encode pdf =
                 pageRootIndirectReference
                 ([ ( "Kids"
                    , allPages
-                        |> List.map (indirectObjectToIndirectReference >> IndirectReference)
+                        |> List.map (.page >> indirectObjectToIndirectReference >> IndirectReference)
                         |> PdfArray
                    )
-                 , ( "Count", PdfInt (List.length (pages pdf)) )
+                 , ( "Count", PdfInt (List.length (pages pdf_)) )
                  , ( "Type", Name "Pages" )
                  , ( "Resources"
                    , PdfDict
@@ -135,9 +125,9 @@ encode pdf =
                     ]
                 )
 
-        allPages : List IndirectObject
+        allPages : List { page : IndirectObject, content : IndirectObject }
         allPages =
-            pages pdf
+            pages pdf_
                 |> List.indexedMap
                     (\index (Page pageSize pageText) ->
                         let
@@ -150,34 +140,59 @@ encode pdf =
                                         let
                                             ( x, y ) =
                                                 Point2d.toTuple Length.inPoints position
+
+                                            writeLine : String -> String
+                                            writeLine text_ =
+                                                " " ++ textToString text_ ++ " Tj"
+
+                                            lineSpacing : String
+                                            lineSpacing =
+                                                lengthToString (Quantity.negate fontSize)
                                         in
-                                        previous
-                                            ++ (" /F1 " ++ lengthToString fontSize ++ " Tf ")
-                                            ++ (floatToString x ++ " " ++ floatToString y ++ " Td ")
-                                            ++ (textToString text ++ " Tj")
+                                        case String.lines text of
+                                            head :: rest ->
+                                                let
+                                                    restOfLines : String
+                                                    restOfLines =
+                                                        rest
+                                                            |> List.map
+                                                                (\line ->
+                                                                    (" 0 " ++ lineSpacing ++ " Td") ++ writeLine line
+                                                                )
+                                                            |> String.concat
+                                                in
+                                                previous
+                                                    ++ (" /F1 " ++ lengthToString fontSize ++ " Tf ")
+                                                    ++ (floatToString x ++ " " ++ floatToString y ++ " Td")
+                                                    ++ writeLine head
+                                                    ++ restOfLines
+
+                                            [] ->
+                                                ""
                                     )
                                     ""
                                     pageText
                                     |> (\a -> "BT" ++ a ++ " ET")
                         in
-                        [ indirectObject
-                            { index = index * 2 + 5, revision = 0 }
-                            (PdfDict
-                                [ ( "Type", Name "Page" )
-                                , mediaBox pageSize
-                                , ( "Parent", IndirectReference pageRootIndirectReference )
-                                , ( "Contents", IndirectReference contentIndirectReference )
-                                ]
-                            )
-                        , indirectObject
-                            contentIndirectReference
-                            (Stream [] (StreamContent streamContent))
-                        ]
+                        { page =
+                            indirectObject
+                                { index = index * 2 + 5, revision = 0 }
+                                (PdfDict
+                                    [ ( "Type", Name "Page" )
+                                    , mediaBox pageSize
+                                    , ( "Parent", IndirectReference pageRootIndirectReference )
+                                    , ( "Contents", IndirectReference contentIndirectReference )
+                                    ]
+                                )
+                        , content =
+                            indirectObject
+                                contentIndirectReference
+                                (Stream [] (StreamContent streamContent))
+                        }
                     )
-                |> List.concat
 
         ( content, xRef, _ ) =
-            (info :: catalog :: pageRoot :: font :: allPages)
+            (info :: catalog :: pageRoot :: font :: List.concatMap (\a -> [ a.page, a.content ]) allPages)
                 |> List.sortBy indirectObjectIndex
                 |> List.foldl
                     (\indirectObject_ ( content_, xRef_, index ) ->
@@ -223,7 +238,7 @@ encode pdf =
 
 
 pdfVersion =
-    "1.4"
+    "1.7"
 
 
 mediaBox : Vector2d Meters PageCoordinates -> ( String, Object )
