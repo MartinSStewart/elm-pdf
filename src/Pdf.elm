@@ -1,4 +1,4 @@
-module Pdf exposing (Page, Pdf, TextBox, addPage, addPages, encode, init, page, pages, title)
+module Pdf exposing (Page, Pdf, TextBox, addPage, addPages, encode, init, page, pages, textBox, title)
 
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
@@ -23,6 +23,17 @@ type TextBox
         { position : Point2d Meters PageCoordinates
         , maxWidth : Maybe Length
         , text : String
+        , fontSize : Length
+        }
+
+
+textBox : Length -> Maybe Length -> Point2d Meters PageCoordinates -> String -> TextBox
+textBox fontSize maxWidth position text =
+    TextBox
+        { position = position
+        , maxWidth = maxWidth
+        , text = text
+        , fontSize = fontSize
         }
 
 
@@ -67,225 +78,279 @@ pages (Pdf pdf) =
 encode : Pdf -> String
 encode pdf =
     let
+        infoIndirectReference =
+            { index = 1, revision = 0 }
+
+        catalogIndirectReference =
+            { index = 2, revision = 0 }
+
+        pageRootIndirectReference =
+            { index = 3, revision = 0 }
+
+        fontIndirectReference =
+            { index = 4, revision = 0 }
+
+        info : IndirectObject
         info =
-            PdfDict [ ( Name "Title", Text_ (Text (title pdf)) ) ] |> PdfDict_
+            indirectObject
+                infoIndirectReference
+                (PdfDict [ ( "Title", Text (title pdf) ) ])
 
+        catalog : IndirectObject
         catalog =
-            PdfDict
-                [ ( Name "Type", Name_ (Name "Catalog") )
-                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 3, revision = 0 }) )
-                ]
-                |> PdfDict_
+            indirectObject
+                catalogIndirectReference
+                (PdfDict [ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ])
 
+        pageRoot : IndirectObject
+        pageRoot =
+            indirectObject
+                pageRootIndirectReference
+                ([ ( "Kids"
+                   , allPages
+                        |> List.map (indirectObjectToIndirectReference >> IndirectReference)
+                        |> PdfArray
+                   )
+                 , ( "Count", PdfInt (List.length (pages pdf)) )
+                 , ( "Type", Name "Pages" )
+                 , ( "Resources"
+                   , PdfDict
+                        [ ( "Font", PdfDict [ ( "F1", IndirectReference fontIndirectReference ) ] )
+                        , ( "PRocSet", PdfArray [ Name "PDF", Name "Text" ] )
+                        ]
+                   )
+                 ]
+                    |> PdfDict
+                )
+
+        font : IndirectObject
+        font =
+            indirectObject
+                fontIndirectReference
+                (PdfDict
+                    [ ( "Type", Name "Page" )
+                    , ( "Subtype", Name "Type1" )
+                    , ( "BaseFont", Name "Helvetica" )
+                    , ( "Encoding", Name "WinAnsiEncoding" )
+                    ]
+                )
+
+        allPages : List IndirectObject
         allPages =
             pages pdf
-                |> List.map
-                    (\(Page pageSize pageText) ->
-                        PdfDict [ ( Name "Type", Name_ (Name "Page") ), mediaBox pageSize ]
-                            |> PdfDict_
-                    )
+                |> List.indexedMap
+                    (\index (Page pageSize pageText) ->
+                        let
+                            contentIndirectReference =
+                                { index = index * 2 + 6, revision = 0 }
 
-        pages_ =
-            PdfDict
-                [ ( Name "Kids", PdfArray_ (PdfArray [ IndirectReference_ (IndirectReference { index = 0, revision = 0 }) ]) )
-                , ( Name "Count", Int_ (List.length allPages) )
-                , ( Name "Pages", IndirectReference_ (IndirectReference { index = 3, revision = 0 }) )
-                ]
-                |> PdfDict_
+                            streamContent =
+                                List.foldl
+                                    (\(TextBox { position, maxWidth, text, fontSize }) previous ->
+                                        let
+                                            ( x, y ) =
+                                                Point2d.toTuple Length.inPoints position
+                                        in
+                                        previous
+                                            ++ (" /F1 " ++ lengthToString fontSize ++ " Tf ")
+                                            ++ (floatToString x ++ " " ++ floatToString y ++ " Td ")
+                                            ++ (textToString text ++ " Tj")
+                                    )
+                                    ""
+                                    pageText
+                                    |> (\a -> "BT" ++ a ++ " ET")
+                        in
+                        [ indirectObject
+                            { index = index * 2 + 5, revision = 0 }
+                            (PdfDict
+                                [ ( "Type", Name "Page" )
+                                , mediaBox pageSize
+                                , ( "Parent", IndirectReference pageRootIndirectReference )
+                                , ( "Contents", IndirectReference contentIndirectReference )
+                                ]
+                            )
+                        , indirectObject
+                            contentIndirectReference
+                            (Stream [] (StreamContent streamContent))
+                        ]
+                    )
+                |> List.concat
 
         ( content, xRef, _ ) =
-            [ info, catalog, pages_ ]
+            (info :: catalog :: pageRoot :: font :: allPages)
+                |> List.sortBy indirectObjectIndex
                 |> List.foldl
-                    (\object ( content_, xRef_, index ) ->
+                    (\indirectObject_ ( content_, xRef_, index ) ->
                         let
                             text_ =
-                                indirectObjectToString index 0 object
+                                indirectObjectToString indirectObject_
                         in
                         ( content_ ++ text_ ++ "\n"
                         , { offset = String.length content_, size = String.length text_ } :: xRef_
                         , index + 1
                         )
                     )
-                    ( "%PDF-1.7\n", [], 1 )
+                    ( "%PDF-" ++ pdfVersion ++ "\n", [], 1 )
+
+        xRefToString : XRef -> String
+        xRefToString (XRef xRefs) =
+            let
+                xRefLine { offset, size } =
+                    String.padLeft 10 '0' (String.fromInt offset)
+                        ++ " "
+                        ++ String.padLeft 5 '0' (String.fromInt size)
+                        ++ " n\n"
+            in
+            "xref\n"
+                ++ ("0 " ++ String.fromInt (List.length xRefs + 1) ++ "\n")
+                ++ "0000000000 65535 f\n"
+                ++ (List.map xRefLine xRefs |> String.concat)
+                ++ "trailer\n"
+                ++ pdfDictToString
+                    [ ( "Size", PdfInt (List.length xRefs) )
+                    , ( "Info", IndirectReference infoIndirectReference )
+                    , ( "Root", IndirectReference catalogIndirectReference )
+                    ]
+                ++ "\nstartxref\n"
     in
     content
-        ++ xRefToString 1 2 (XRef (List.reverse xRef))
+        ++ xRefToString (XRef (List.reverse xRef))
         ++ String.fromInt (String.length content)
         ++ "\n%%EOF"
 
 
-mediaBox : Vector2d units coordinates -> ( Name, Object )
+pdfVersion =
+    "1.4"
+
+
+mediaBox : Vector2d Meters PageCoordinates -> ( String, Object )
 mediaBox size =
     let
         ( w, h ) =
             Vector2d.toTuple Length.inPoints size
     in
-    ( Name "MediaBox", PdfArray_ (PdfArray [ Int_ 0, Int_ 0, Float_ w, Float_ h ]) )
+    ( "MediaBox", PdfArray [ PdfInt 0, PdfInt 0, PdfFloat w, PdfFloat h ] )
 
 
 type XRef
     = XRef (List { offset : Int, size : Int })
 
 
-xRefToString : Int -> Int -> XRef -> String
-xRefToString infoIndex rootIndex (XRef xRefs) =
-    let
-        xRefLine { offset, size } =
-            String.padLeft 10 '0' (String.fromInt offset)
-                ++ " "
-                ++ String.padLeft 5 '0' (String.fromInt size)
-                ++ " n\n"
-    in
-    "xref\n"
-        ++ ("0 " ++ String.fromInt (List.length xRefs) ++ "\n")
-        ++ "0000000000 65535 f\n"
-        ++ (List.map xRefLine xRefs |> String.concat)
-        ++ "trailer\n"
-        ++ dictionaryToString
-            (PdfDict
-                [ ( Name "Size", Int_ (List.length xRefs) )
-                , ( Name "Info", IndirectReference_ (IndirectReference { index = infoIndex, revision = 0 }) )
-                , ( Name "Root", IndirectReference_ (IndirectReference { index = rootIndex, revision = 0 }) )
-                ]
-            )
-        ++ "\nstartxref\n"
-
-
-type Name
-    = Name String
-
-
 type Object
-    = Name_ Name
-    | Float_ Float
-    | Int_ Int
-    | PdfDict_ PdfDict
-    | PdfArray_ PdfArray
-    | Text_ Text
-    | Stream_ Stream
-    | IndirectReference_ IndirectReference
+    = Name String
+    | PdfFloat Float
+    | PdfInt Int
+    | PdfDict (List ( String, Object ))
+    | PdfArray (List Object)
+    | Text String
+    | Stream (List ( String, Object )) StreamContent
+    | IndirectReference IndirectReference_
 
 
 objectToString : Object -> String
 objectToString object =
     case object of
-        Name_ name ->
+        Name name ->
             nameToString name
 
-        Float_ float ->
+        PdfFloat float ->
             floatToString float
 
-        Int_ int ->
+        PdfInt int ->
             String.fromInt int
 
-        PdfDict_ pdfDict ->
-            dictionaryToString pdfDict
+        PdfDict pdfDict ->
+            pdfDictToString pdfDict
 
-        PdfArray_ pdfArray ->
-            arrayToString pdfArray
+        PdfArray pdfArray ->
+            let
+                contentText =
+                    List.map objectToString pdfArray |> List.intersperse " " |> String.concat
+            in
+            "[ " ++ contentText ++ " ]"
 
-        Text_ text_ ->
+        Text text_ ->
             textToString text_
 
-        Stream_ stream ->
-            streamToString stream
+        Stream dict (StreamContent content) ->
+            let
+                dict2 =
+                    ( "Length", PdfInt (String.length content + 2) ) :: dict
+            in
+            pdfDictToString dict2 ++ "\nstream\n" ++ content ++ "\nendstream"
 
-        IndirectReference_ indirectReference ->
-            indirectReferenceToString indirectReference
+        IndirectReference { index, revision } ->
+            String.fromInt index ++ " " ++ String.fromInt revision ++ " R"
 
 
-nameToString : Name -> String
-nameToString (Name name) =
+textToString : String -> String
+textToString text_ =
+    text_
+        -- Convert windows line endings to unix line endings
+        |> String.replace "\u{000D}\n" "\n"
+        -- Escape backslashes
+        |> String.replace "\\" "\\\\"
+        -- Escape parenthesis
+        |> String.replace ")" "\\)"
+        |> String.replace "(" "\\("
+        |> (\a -> "(" ++ a ++ ")")
+
+
+nameToString : String -> String
+nameToString name =
     "/" ++ name
 
 
-type PdfDict
-    = PdfDict (List ( Name, Object ))
+pdfDictToString : List ( String, Object ) -> String
+pdfDictToString =
+    List.map (\( key, value ) -> nameToString key ++ " " ++ objectToString value)
+        >> List.intersperse " "
+        >> String.concat
+        >> (\a -> "<< " ++ a ++ " >>")
 
 
-dictionaryToString : PdfDict -> String
-dictionaryToString (PdfDict keyValues) =
-    let
-        contentText =
-            keyValues
-                |> List.map (\( key, value ) -> nameToString key ++ " " ++ objectToString value)
-                |> List.intersperse " "
-                |> String.concat
-    in
-    "<< " ++ contentText ++ " >>"
-
-
-type Stream
-    = Stream PdfDict StreamContent
+type alias IndirectReference_ =
+    { index : Int, revision : Int }
 
 
 type IndirectObject
-    = IndirectObject
+    = IndirectObject { index : Int, revision : Int, object : Object }
 
 
-indirectObjectToString : Int -> Int -> Object -> String
-indirectObjectToString index revision object =
+indirectObject : IndirectReference_ -> Object -> IndirectObject
+indirectObject { index, revision } object =
+    IndirectObject { index = index, revision = revision, object = object }
+
+
+indirectObjectToIndirectReference : IndirectObject -> IndirectReference_
+indirectObjectToIndirectReference (IndirectObject { index, revision }) =
+    { index = index, revision = revision }
+
+
+indirectObjectToString : IndirectObject -> String
+indirectObjectToString (IndirectObject { index, revision, object }) =
     String.fromInt index
         ++ " "
         ++ String.fromInt revision
         ++ " obj\n"
         ++ objectToString object
-        ++ "\nendobject"
+        ++ "\nendobj"
 
 
-type IndirectReference
-    = IndirectReference { index : Int, revision : Int }
-
-
-indirectReferenceToString : IndirectReference -> String
-indirectReferenceToString (IndirectReference { index, revision }) =
-    String.fromInt index ++ " " ++ String.fromInt revision ++ " R"
+indirectObjectIndex : IndirectObject -> Int
+indirectObjectIndex (IndirectObject { index }) =
+    index
 
 
 type StreamContent
     = StreamContent String
 
 
-streamToString : Stream -> String
-streamToString (Stream (PdfDict dict) (StreamContent content)) =
-    let
-        dict2 =
-            ( Name "Length", Int_ (String.length content + 2) ) :: dict |> PdfDict
-    in
-    dictionaryToString dict2 ++ " stream " ++ content ++ " endstream"
-
-
-type Text
-    = Text String
-
-
-text : String -> Text
-text =
-    Text
-
-
-textToString : Text -> String
-textToString (Text text_) =
-    text_
-        |> String.replace "\\" "\\\\"
-        |> String.replace ")" "\\)"
-        |> String.replace "(" "\\("
-        |> (\a -> "(" ++ a ++ ")")
-
-
-type PdfArray
-    = PdfArray (List Object)
-
-
-arrayToString : PdfArray -> String
-arrayToString (PdfArray content) =
-    let
-        contentText =
-            List.map objectToString content |> List.intersperse " " |> String.concat
-    in
-    "[ " ++ contentText ++ " ]"
-
-
 floatToString : Float -> String
 floatToString =
     Round.round 5
+
+
+lengthToString : Length -> String
+lengthToString =
+    Length.inPoints >> floatToString

@@ -3,6 +3,7 @@ module Base exposing (tests)
 import Expect exposing (Expectation)
 import Length
 import Pdf
+import Point2d
 import Test exposing (Test, describe, test)
 import Vector2d
 
@@ -78,9 +79,17 @@ startxref
                 Pdf.encode
                     (Pdf.init
                         { title = "test"
-                        , firstPage = Pdf.page (Vector2d.fromTuple Length.points ( 100, 100 )) []
+                        , firstPage =
+                            Pdf.page
+                                (Vector2d.fromTuple Length.points ( 1100, 100 ))
+                                [ Pdf.textBox
+                                    (Length.points 36)
+                                    Nothing
+                                    (Point2d.fromTuple Length.points ( 10, 30 ))
+                                    "If you can read this then it's possible to encode PDFs with Elm!"
+                                ]
                         }
                     )
-                    |> Debug.log "a"
+                    |> Debug.log ""
                     |> Expect.equal expected
         ]
