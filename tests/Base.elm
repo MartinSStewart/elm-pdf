@@ -214,3 +214,39 @@ startxref
                     |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
                     |> Expect.equal (Just expected)
         ]
+
+
+utf8Decoder : Int -> BD.Decoder String
+utf8Decoder byteLength =
+    BD.loop { counter = 0, text = "", extraBytes = [], expectingCount = 1 }
+        (\{ counter, text, extraBytes, expectingCount } ->
+            if counter >= byteLength then
+                BD.Done text
+
+            else
+                BD.map
+                    (\value ->
+                        (if List.isEmpty extraBytes then
+                            if value >= 240 then
+                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 3 }
+
+                            else if value >= 224 then
+                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 2 }
+
+                            else if value >= 192 then
+                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 1 }
+
+                            else if value >= 128 then
+                                0
+
+                            else
+                                { counter = counter + 1, text = Char.fromCode value :: text, extraBytes = [], expectingCount = 1 }
+
+                         else
+                            {}
+                        )
+                            |> BD.Loop
+                    )
+                    BD.unsignedInt8
+        )
+        |> .text
