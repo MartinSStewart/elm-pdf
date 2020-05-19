@@ -71,7 +71,7 @@ startxref
                     ]
                     |> Pdf.encoder
                     |> BE.encode
-                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
+                    |> (\bytes -> BD.decode (utf8Decoder (Bytes.width bytes)) bytes)
                     |> Expect.equal (Just expected)
         , test "Two page PDF" <|
             \_ ->
@@ -213,40 +213,77 @@ startxref
                     |> BE.encode
                     |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
                     |> Expect.equal (Just expected)
+        , test "Text containing unicode" <|
+            \_ ->
+                let
+                    expected : String
+                    expected =
+                        String.replace "\u{000D}\n"
+                            "\n"
+                            """%PDF-1.7
+1 0 obj  % entry point
+<< /Title (Unicode text) >>
+endobj
+2 0 obj
+<< /Type /Catalog /Pages 3 0 R >>
+endobj
+3 0 obj
+<< /Kids [ 5 0 R ] /Count 1 /Type /Pages /Resources << /Font << /F1 4 0 R >> /PRocSet [ /PDF /Text ] >> >>
+endobj
+4 0 obj
+<< /Type /Page /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /MediaBox [ 0 0 700.00000 400.00000 ] /Parent 3 0 R /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 82 >>
+stream
+BT /F1 36.00000 Tf 10.00000 300.00000 Td (Unicode support ဍᄍ」䀍倍) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f
+0000000009 00057 n
+0000000067 00048 n
+0000000116 00121 n
+0000000238 00096 n
+0000000335 00100 n
+0000000436 00129 n
+trailer
+<< /Size 7 /Info 1 0 R /Root 2 0 R >>
+startxref
+566
+%%EOF"""
+                in
+                Pdf.pdf
+                    "Unicode text"
+                    [ Pdf.page
+                        { size = Vector2d.fromTuple Length.points ( 700, 400 )
+                        , contents =
+                            [ Pdf.textBox
+                                (Length.points 36)
+                                (Point2d.fromTuple Length.points ( 10, 300 ))
+                                "Unicode support ဍᄍ」䀍倍"
+                            ]
+                        }
+                    ]
+                    |> Pdf.encoder
+                    |> BE.encode
+                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
+                    |> Expect.equal (Just expected)
         ]
 
 
 utf8Decoder : Int -> BD.Decoder String
 utf8Decoder byteLength =
-    BD.loop { counter = 0, text = "", extraBytes = [], expectingCount = 1 }
-        (\{ counter, text, extraBytes, expectingCount } ->
+    BD.loop ( 0, [] )
+        (\( counter, text ) ->
             if counter >= byteLength then
-                BD.Done text
+                BD.succeed (BD.Done text)
 
             else
-                BD.map
-                    (\value ->
-                        (if List.isEmpty extraBytes then
-                            if value >= 240 then
-                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 3 }
-
-                            else if value >= 224 then
-                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 2 }
-
-                            else if value >= 192 then
-                                { counter = counter + 1, text = text, extraBytes = [ value ], expectingCount = 1 }
-
-                            else if value >= 128 then
-                                0
-
-                            else
-                                { counter = counter + 1, text = Char.fromCode value :: text, extraBytes = [], expectingCount = 1 }
-
-                         else
-                            {}
-                        )
-                            |> BD.Loop
-                    )
-                    BD.unsignedInt8
+                BD.unsignedInt8 |> BD.map (\value -> BD.Loop ( counter + 1, Char.fromCode value :: text ))
         )
-        |> .text
+        |> BD.map (List.reverse >> String.fromList)

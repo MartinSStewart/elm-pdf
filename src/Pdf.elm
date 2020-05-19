@@ -11,6 +11,7 @@ module Pdf exposing
 
 import Bytes exposing (Bytes)
 import Bytes.Encode as BE
+import Flate
 import Length exposing (Length, Meters)
 import Point2d exposing (Point2d)
 import Quantity
@@ -145,6 +146,7 @@ encoder pdf_ =
                             contentIndirectReference =
                                 { index = index * 2 + 6, revision = 0 }
 
+                            streamContent : String
                             streamContent =
                                 List.foldl
                                     (\(TextBox { position, text, fontSize }) previous ->
@@ -184,8 +186,6 @@ encoder pdf_ =
                                     ""
                                     pageText
                                     |> (\a -> "BT" ++ a ++ " ET")
-                                    |> BE.string
-                                    |> BE.encode
                         in
                         { page =
                             indirectObject
@@ -200,7 +200,7 @@ encoder pdf_ =
                         , content =
                             indirectObject
                                 contentIndirectReference
-                                (Stream [] (StreamContent streamContent))
+                                (Stream [] (DrawingInstructions streamContent))
                         }
                     )
 
@@ -262,7 +262,7 @@ contentToBytes =
                 , index + 1
                 )
             )
-            ( "%PDF-" ++ pdfVersion ++ "\n" |> BE.string |> BE.encode, [], 1 )
+            ( "%PDF-" ++ pdfVersion ++ "\n%éééé\n" |> BE.string |> BE.encode, [], 1 )
         >> (\( content, xRef, _ ) -> ( content, List.reverse xRef ))
 
 
@@ -319,15 +319,28 @@ objectToString object =
         Text text_ ->
             textToString text_ |> BE.string
 
-        Stream dict (StreamContent content) ->
+        Stream dict streamContent ->
             let
-                dict2 =
-                    ( "Length", PdfInt (Bytes.width content + 2) ) :: dict
+                ( streamContent_, dict2 ) =
+                    case streamContent of
+                        ResourceData data ->
+                            ( data, ( "Length", PdfInt (Bytes.width data) ) :: dict )
+
+                        DrawingInstructions text ->
+                            let
+                                textBytes =
+                                    text |> BE.string |> BE.encode |> Flate.deflate
+                            in
+                            ( textBytes
+                            , ( "Length", PdfInt (Bytes.width textBytes) )
+                                :: ( "Filter", Name "FlateDecode" )
+                                :: dict
+                            )
             in
             BE.sequence
                 [ pdfDictToString dict2
                 , BE.string "\nstream\n"
-                , BE.bytes content
+                , BE.bytes streamContent_
                 , BE.string "\nendstream"
                 ]
 
@@ -409,7 +422,8 @@ indirectObjectIndex (IndirectObject { index }) =
 
 
 type StreamContent
-    = StreamContent Bytes
+    = ResourceData Bytes
+    | DrawingInstructions String
 
 
 floatToString : Float -> String
