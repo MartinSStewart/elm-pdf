@@ -94,13 +94,13 @@ encoder pdf_ =
 
         info : IndirectObject
         info =
-            entryPoint
+            indirectObject
                 infoIndirectReference
                 (PdfDict [ ( "Title", Text (title pdf_) ) ])
 
         catalog : IndirectObject
         catalog =
-            indirectObject
+            entryPoint
                 catalogIndirectReference
                 (PdfDict [ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ])
 
@@ -218,7 +218,8 @@ encoder pdf_ =
                 xRefLine { offset, size } =
                     String.padLeft 10 '0' (String.fromInt offset)
                         ++ " "
-                        ++ String.padLeft 5 '0' (String.fromInt size)
+                        --++ String.padLeft 5 '0' (String.fromInt size)
+                        ++ "00000"
                         ++ " n\n"
 
                 xRefCount =
@@ -262,7 +263,18 @@ contentToBytes =
                 , index + 1
                 )
             )
-            ( "%PDF-" ++ pdfVersion ++ "\n%éééé\n" |> BE.string |> BE.encode, [], 1 )
+            ( BE.sequence
+                [ "%PDF-" ++ pdfVersion ++ "\n%" |> BE.string
+                , BE.unsignedInt8 233
+                , BE.unsignedInt8 233
+                , BE.unsignedInt8 233
+                , BE.unsignedInt8 233
+                , BE.string "\n"
+                ]
+                |> BE.encode
+            , []
+            , 1
+            )
         >> (\( content, xRef, _ ) -> ( content, List.reverse xRef ))
 
 
