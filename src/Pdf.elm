@@ -329,7 +329,7 @@ objectToString object =
                         DrawingInstructions text ->
                             let
                                 textBytes =
-                                    text |> BE.string |> BE.encode |> Flate.deflate
+                                    text |> BE.string |> BE.encode |> Flate.deflateZlib
                             in
                             ( textBytes
                             , ( "Length", PdfInt (Bytes.width textBytes) )

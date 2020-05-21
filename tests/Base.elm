@@ -71,7 +71,7 @@ startxref
                     ]
                     |> Pdf.encoder
                     |> BE.encode
-                    |> (\bytes -> BD.decode (utf8Decoder (Bytes.width bytes)) bytes)
+                    |> (\bytes -> BD.decode (BD.string (Bytes.width bytes)) bytes)
                     |> Expect.equal (Just expected)
         , test "Two page PDF" <|
             \_ ->
@@ -276,14 +276,15 @@ startxref
         ]
 
 
-utf8Decoder : Int -> BD.Decoder String
-utf8Decoder byteLength =
-    BD.loop ( 0, [] )
-        (\( counter, text ) ->
-            if counter >= byteLength then
-                BD.succeed (BD.Done text)
 
-            else
-                BD.unsignedInt8 |> BD.map (\value -> BD.Loop ( counter + 1, Char.fromCode value :: text ))
-        )
-        |> BD.map (List.reverse >> String.fromList)
+--utf8Decoder : Int -> BD.Decoder String
+--utf8Decoder byteLength =
+--    BD.loop ( 0, [] )
+--        (\( counter, text ) ->
+--            if counter >= byteLength then
+--                BD.succeed (BD.Done text)
+--
+--            else
+--                BD.unsignedInt8 |> BD.map (\value -> BD.Loop ( counter + 1, Char.fromCode value :: text ))
+--        )
+--        |> BD.map (List.reverse >> String.fromList)
