@@ -23,7 +23,18 @@ pdf =
     Pdf.pdf "Example pdf"
         [ Pdf.page
             { size = Vector2d.fromTuple Length.points ( 200, 300 )
-            , contents = [ Pdf.textBox (Length.points 32) Point2d.origin "Test" ]
+            , contents =
+                [ Pdf.text
+                    (Length.points 32)
+                    (Pdf.timesRoman { bold = False, italic = False })
+                    Point2d.origin
+                    "Test"
+                , Pdf.text
+                    (Length.points 32)
+                    (Pdf.helvetica { bold = True, oblique = False })
+                    (Point2d.fromTuple Length.points ( 0, 32 ))
+                    "Test2"
+                ]
             }
         ]
         |> Pdf.encoder

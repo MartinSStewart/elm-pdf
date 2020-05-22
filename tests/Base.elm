@@ -62,7 +62,7 @@ startxref
                     [ Pdf.page
                         { size = Vector2d.fromTuple Length.points ( 1100, 100 )
                         , contents =
-                            [ Pdf.textBox
+                            [ Pdf.text
                                 (Length.points 30)
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
@@ -133,7 +133,7 @@ startxref
                     [ Pdf.page
                         { size = Vector2d.fromTuple Length.points ( 1100, 100 )
                         , contents =
-                            [ Pdf.textBox
+                            [ Pdf.text
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 10, 30 ))
                                 "If you can read this then it's possible to encode PDFs with Elm!"
@@ -142,7 +142,7 @@ startxref
                     , Pdf.page
                         { size = Vector2d.fromTuple Length.points ( 400, 100 )
                         , contents =
-                            [ Pdf.textBox
+                            [ Pdf.text
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 40, 30 ))
                                 "The second page"
@@ -202,7 +202,7 @@ startxref
                     [ Pdf.page
                         { size = Vector2d.fromTuple Length.points ( 700, 400 )
                         , contents =
-                            [ Pdf.textBox
+                            [ Pdf.text
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 10, 300 ))
                                 "If you can read this then\n it's\n\n possible to encode PDFs with Elm!"
@@ -262,7 +262,7 @@ startxref
                     [ Pdf.page
                         { size = Vector2d.fromTuple Length.points ( 700, 400 )
                         , contents =
-                            [ Pdf.textBox
+                            [ Pdf.text
                                 (Length.points 36)
                                 (Point2d.fromTuple Length.points ( 10, 300 ))
                                 "Unicode support ဍᄍ」䀍倍"
