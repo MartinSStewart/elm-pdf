@@ -215,10 +215,9 @@ encoder pdf_ =
         xRefToString : XRef -> BE.Encoder
         xRefToString (XRef xRefs) =
             let
-                xRefLine { offset, size } =
+                xRefLine { offset } =
                     String.padLeft 10 '0' (String.fromInt offset)
                         ++ " "
-                        --++ String.padLeft 5 '0' (String.fromInt size)
                         ++ "00000"
                         ++ " n\n"
 
@@ -248,34 +247,35 @@ encoder pdf_ =
         ]
 
 
-contentToBytes : List IndirectObject -> ( Bytes, List { offset : Int, size : Int } )
+contentToBytes : List IndirectObject -> ( Bytes, List { offset : Int } )
 contentToBytes =
     List.sortBy indirectObjectIndex
         >> List.foldl
             (\indirectObject_ ( content_, xRef_, index ) ->
-                let
-                    bytes : Bytes
-                    bytes =
-                        indirectObjectToString indirectObject_ |> BE.encode
-                in
-                ( BE.sequence [ BE.bytes content_, BE.bytes bytes, BE.string "\n" ] |> BE.encode
-                , { offset = Bytes.width content_, size = Bytes.width bytes } :: xRef_
+                ( BE.sequence [ BE.bytes content_, indirectObjectToString indirectObject_, BE.string "\n" ] |> BE.encode
+                , { offset = Bytes.width content_ } :: xRef_
                 , index + 1
                 )
             )
-            ( BE.sequence
-                [ "%PDF-" ++ pdfVersion ++ "\n%" |> BE.string
-                , BE.unsignedInt8 233
-                , BE.unsignedInt8 233
-                , BE.unsignedInt8 233
-                , BE.unsignedInt8 233
-                , BE.string "\n"
-                ]
-                |> BE.encode
+            ( header
             , []
             , 1
             )
         >> (\( content, xRef, _ ) -> ( content, List.reverse xRef ))
+
+
+header =
+    BE.sequence
+        [ "%PDF-" ++ pdfVersion ++ "\n%" |> BE.string
+
+        -- Comment containing 4 ascii encoded é's to indicate that this pdf file contains binary data
+        , BE.unsignedInt8 233
+        , BE.unsignedInt8 233
+        , BE.unsignedInt8 233
+        , BE.unsignedInt8 233
+        , BE.string "\n"
+        ]
+        |> BE.encode
 
 
 pdfVersion =
@@ -292,7 +292,7 @@ mediaBox size =
 
 
 type XRef
-    = XRef (List { offset : Int, size : Int })
+    = XRef (List { offset : Int })
 
 
 type Object
