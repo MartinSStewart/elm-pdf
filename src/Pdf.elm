@@ -1,7 +1,8 @@
 module Pdf exposing
-    ( pdf, page, encoder, Pdf, Page
-    , text, image, Item, PageCoordinates
+    ( pdf, page, paperSize, encoder, Pdf, Page
+    , text, Item, PageCoordinates
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
+    , ASizes(..)
     )
 
 {-| In order to use this package you'll need to install
@@ -12,21 +13,26 @@ module Pdf exposing
 
 # PDF creation
 
-@docs pdf, page, textBox, encoder, Pdf, Page
+@docs pdf, page, paperSize, encoder, Pdf, Page
 
 
 # Page content
 
-@docs text, image, Item, PageCoordinates
+The content to show on a page.
+Currently only text can be shown and a lot of features are missing such as line automatic line breaks and unicode support.
+
+@docs text, Item, PageCoordinates
 
 
 # Built-in fonts
+
+There are a few fonts that PDF supports by default.
+Custom fonts have to be embedded in the file in order to be used and this package doesn't support that yet.
 
 @docs helvetica, timesRoman, courier, symbol, zapfDingbats, Font
 
 -}
 
-import Array exposing (Array)
 import BoundingBox2d exposing (BoundingBox2d)
 import Bytes exposing (Bytes)
 import Bytes.Encode as BE
@@ -42,15 +48,19 @@ import Vector2d exposing (Vector2d)
 
 
 {-| The coordinate system used when placing things on a page.
+The top left corner is the origin point.
+Larger x values moves you to the right and larger y values move you down the page.
 -}
 type PageCoordinates
     = PageCoordinates Never
 
 
+{-| -}
 type Pdf
     = Pdf { title : String, pages : List Page }
 
 
+{-| -}
 type Page
     = Page (Vector2d Meters PageCoordinates) (List Item)
 
@@ -69,6 +79,8 @@ type Item
         }
 
 
+{-| Text displayed on a page.
+-}
 text : Length -> Font -> Point2d Meters PageCoordinates -> String -> Item
 text fontSize font position text_ =
     TextItem
@@ -88,11 +100,103 @@ image boundingBox size image_ =
         }
 
 
+{-| A page in our PDF document.
+-}
 page : { size : Vector2d Meters PageCoordinates, contents : List Item } -> Page
 page { size, contents } =
-    Page size contents
+    let
+        { x, y } =
+            Vector2d.unwrap size
+    in
+    Page (Vector2d.unsafe { x = max 0 x, y = max 0 y }) contents
 
 
+{-| [Standard sizes for paper](https://en.wikipedia.org/wiki/ISO_216).
+Smaller numbers mean larger sizes.
+If you printed something on a typical home printer then it was probably on A4 sized paper.
+-}
+type ASizes
+    = A0
+    | A1
+    | A2
+    | A3
+    | A4
+    | A5
+    | A6
+    | A7
+    | A8
+    | A9
+    | A10
+
+
+{-| -}
+type Orientation
+    = Landscape
+    | Portrait
+
+
+{-| Typical sizes for paper in physical units.
+
+    paperSize A4 Portrait -- Vector2d.millimeters 210 297
+
+    paperSize A4 Landscape -- Vector2d.millimeters 297 210
+
+    paperSize A0 Landscape -- Vector2d.millimeters 1189 841
+
+-}
+paperSize : Orientation -> ASizes -> Vector2d Meters PageCoordinates
+paperSize orientation size =
+    let
+        v =
+            case size of
+                A0 ->
+                    Vector2d.millimeters 841 1189
+
+                A1 ->
+                    Vector2d.millimeters 594 841
+
+                A2 ->
+                    Vector2d.millimeters 420 594
+
+                A3 ->
+                    Vector2d.millimeters 297 420
+
+                A4 ->
+                    Vector2d.millimeters 210 297
+
+                A5 ->
+                    Vector2d.millimeters 148 210
+
+                A6 ->
+                    Vector2d.millimeters 105 148
+
+                A7 ->
+                    Vector2d.millimeters 74 105
+
+                A8 ->
+                    Vector2d.millimeters 52 74
+
+                A9 ->
+                    Vector2d.millimeters 37 52
+
+                A10 ->
+                    Vector2d.millimeters 26 37
+    in
+    case orientation of
+        Landscape ->
+            Vector2d.unwrap v |> (\{ x, y } -> Vector2d.unsafe { x = y, y = x })
+
+        Portrait ->
+            v
+
+
+{-| Create a PDF.
+
+    import Pdf
+
+    Pdf.pdf "My PDF" [ Pdf.page ]
+
+-}
 pdf : String -> List Page -> Pdf
 pdf title_ pages_ =
     Pdf
@@ -115,6 +219,17 @@ pages (Pdf pdf_) =
 --- ENCODE ---
 
 
+{-| An encoder for converting the PDF to binary data.
+
+    import Bytes exposing (Bytes)
+    import Bytes.Encode
+    import Pdf
+
+    output : Bytes
+    output =
+        Pdf.encoder myPdf |> Bytes.Encode.encode
+
+-}
 encoder : Pdf -> BE.Encoder
 encoder pdf_ =
     let
@@ -297,13 +412,8 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                                             ( x, y ) =
                                                 Point2d.toTuple Length.inPoints text_.position
 
-                                            writeLine : String -> String
-                                            writeLine line =
-                                                " " ++ textToString line ++ " Tj"
-
-                                            lineSpacing : String
-                                            lineSpacing =
-                                                lengthToString (Quantity.negate text_.fontSize)
+                                            fontSize =
+                                                Length.inPoints text_.fontSize
                                         in
                                         case String.lines text_.text of
                                             head :: rest ->
@@ -313,24 +423,18 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                                                         rest
                                                             |> List.map
                                                                 (\line ->
-                                                                    (" 0 " ++ lineSpacing ++ " Td") ++ writeLine line
+                                                                    (" 0 " ++ floatToString -fontSize ++ " Td ") ++ drawLine line
                                                                 )
                                                             |> String.concat
 
                                                     fontIndex =
                                                         Dict.get (fontName text_.font) fontLookup |> Maybe.withDefault 1
-
-                                                    setFont =
-                                                        " /F"
-                                                            ++ String.fromInt fontIndex
-                                                            ++ " "
-                                                            ++ lengthToString text_.fontSize
-                                                            ++ " Tf "
                                                 in
                                                 previous
-                                                    ++ setFont
-                                                    ++ (floatToString x ++ " " ++ floatToString y ++ " Td")
-                                                    ++ writeLine head
+                                                    ++ setFont fontIndex text_.fontSize
+                                                    ++ moveCursor
+                                                    ++ " "
+                                                    ++ drawLine head
                                                     ++ restOfLines
 
                                             [] ->
@@ -339,7 +443,8 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                                     RasterImage _ ->
                                         Debug.todo ""
                             )
-                            ""
+                            initIntermediateInstructions
+                            pageSize
                             pageText
                             |> (\a -> "BT" ++ a ++ " ET")
                             |> DrawingInstructions
@@ -360,6 +465,73 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                         (Stream [] streamContent)
                 }
             )
+
+
+type alias IntermediateInstructions =
+    { instructions : String
+    , cursorPosition : Point2d Meters PageCoordinates
+    , fontSize : Length
+    , fontIndex : Int
+    }
+
+
+initIntermediateInstructions : Vector2d units coordinates -> IntermediateInstructions
+initIntermediateInstructions pageSize =
+    { instructions = ""
+    , cursorPosition = Point2d.translateBy (Vector2d.xy Quantity.zero (Vector2d.yComponent pageSize)) Point2d.origin
+    , fontSize = Length.points -1
+    , fontIndex = -1
+    }
+
+
+drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
+drawText fontSize fontIndex text_ position intermediate =
+    if text_ == "" then
+        intermediate
+
+    else
+        let
+            lines =
+                String.lines text_
+        in
+        intermediate
+            |> (if fontIndex /= intermediate.fontIndex || fontSize /= intermediate.fontSize then
+                    setFont fontIndex fontSize
+
+                else
+                    identity
+               )
+            |> (if position /= intermediate.cursorPosition then
+                    moveCursor (Vector2d.from position intermediate.cursorPosition)
+
+                else
+                    identity
+               )
+            |> List.
+
+
+drawLine : String -> IntermediateInstructions -> IntermediateInstructions
+drawLine line intermediate =
+    { intermediate | instructions = intermediate.instructions ++ textToString line ++ " Tj " }
+
+
+setFont : Int -> Length -> IntermediateInstructions -> IntermediateInstructions
+setFont fontIndex fontSize intermediate =
+    { intermediate
+        | instructions = intermediate.instructions ++ "/F" ++ String.fromInt fontIndex ++ " " ++ lengthToString fontSize ++ " Tf "
+    }
+
+
+moveCursor : Vector2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
+moveCursor offset intermediate =
+    let
+        ( x, y ) =
+            Vector2d.toTuple Length.inPoints offset
+    in
+    { intermediate
+        | instructions = intermediate.instructions ++ floatToString x ++ " " ++ floatToString -y ++ " Td "
+        , cursorPosition = Point2d.translateBy offset intermediate.cursorPosition
+    }
 
 
 contentToBytes : List IndirectObject -> ( Bytes, List { offset : Int } )
@@ -455,13 +627,29 @@ objectToString object =
 
                         DrawingInstructions text_ ->
                             let
+                                deflate =
+                                    False
+
                                 textBytes =
-                                    text_ |> BE.string |> BE.encode |> Flate.deflateZlib
+                                    text_
+                                        |> BE.string
+                                        |> BE.encode
+                                        |> (if deflate then
+                                                Flate.deflateZlib
+
+                                            else
+                                                identity
+                                           )
                             in
                             ( textBytes
                             , ( "Length", PdfInt (Bytes.width textBytes) )
-                                :: ( "Filter", Name "FlateDecode" )
-                                :: dict
+                                :: (if deflate then
+                                        [ ( "Filter", Name "FlateDecode" ) ]
+
+                                    else
+                                        []
+                                   )
+                                ++ dict
                             )
             in
             BE.sequence
@@ -563,6 +751,11 @@ lengthToString =
     Length.inPoints >> floatToString
 
 
+
+--- Fonts ---
+
+
+{-| -}
 type Font
     = Courier { bold : Bool, oblique : Bool }
     | Helvetica { bold : Bool, oblique : Bool }
@@ -571,26 +764,37 @@ type Font
     | ZapfDingbats
 
 
+{-| Courier, a monospaced font.
+-}
 courier : { bold : Bool, oblique : Bool } -> Font
 courier { bold, oblique } =
     Courier { bold = bold, oblique = oblique }
 
 
+{-| Helvetica, a san-serif font.
+-}
 helvetica : { bold : Bool, oblique : Bool } -> Font
 helvetica { bold, oblique } =
     Helvetica { bold = bold, oblique = oblique }
 
 
+{-| Times Roman font, a serif font.
+It's not the same as Times _New_ Roman but it's very similar looking.
+-}
 timesRoman : { bold : Bool, italic : Bool } -> Font
 timesRoman { bold, italic } =
     TimesRoman { bold = bold, italic = italic }
 
 
+{-| A font made up of a bunch of symbols.
+-}
 symbol : Font
 symbol =
     Symbol
 
 
+{-| Another font made up of a bunch of symbols.
+-}
 zapfDingbats : Font
 zapfDingbats =
     ZapfDingbats

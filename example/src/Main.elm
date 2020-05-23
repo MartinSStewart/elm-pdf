@@ -31,9 +31,9 @@ pdf =
                     "Test"
                 , Pdf.text
                     (Length.points 32)
-                    (Pdf.helvetica { bold = True, oblique = False })
-                    (Point2d.fromTuple Length.points ( 0, 32 ))
-                    "Test2"
+                    (Pdf.helvetica { bold = False, oblique = True })
+                    (Point2d.fromTuple Length.points ( 0, 0 ))
+                    "Test"
                 ]
             }
         ]
