@@ -2,7 +2,7 @@ module Pdf exposing
     ( pdf, page, paperSize, encoder, Pdf, Page
     , text, Item, PageCoordinates
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , ASizes(..)
+    , ASizes(..), Orientation(..)
     )
 
 {-| In order to use this package you'll need to install
@@ -409,44 +409,17 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                                 case item of
                                     TextItem text_ ->
                                         let
-                                            ( x, y ) =
-                                                Point2d.toTuple Length.inPoints text_.position
-
-                                            fontSize =
-                                                Length.inPoints text_.fontSize
+                                            fontIndex =
+                                                Dict.get (fontName text_.font) fontLookup |> Maybe.withDefault 1
                                         in
-                                        case String.lines text_.text of
-                                            head :: rest ->
-                                                let
-                                                    restOfLines : String
-                                                    restOfLines =
-                                                        rest
-                                                            |> List.map
-                                                                (\line ->
-                                                                    (" 0 " ++ floatToString -fontSize ++ " Td ") ++ drawLine line
-                                                                )
-                                                            |> String.concat
-
-                                                    fontIndex =
-                                                        Dict.get (fontName text_.font) fontLookup |> Maybe.withDefault 1
-                                                in
-                                                previous
-                                                    ++ setFont fontIndex text_.fontSize
-                                                    ++ moveCursor
-                                                    ++ " "
-                                                    ++ drawLine head
-                                                    ++ restOfLines
-
-                                            [] ->
-                                                ""
+                                        drawText text_.fontSize fontIndex text_.text text_.position previous
 
                                     RasterImage _ ->
-                                        Debug.todo ""
+                                        previous
                             )
-                            initIntermediateInstructions
-                            pageSize
+                            (initIntermediateInstructions pageSize)
                             pageText
-                            |> (\a -> "BT" ++ a ++ " ET")
+                            |> endIntermediateInstructions
                             |> DrawingInstructions
                 in
                 { page =
@@ -475,13 +448,18 @@ type alias IntermediateInstructions =
     }
 
 
-initIntermediateInstructions : Vector2d units coordinates -> IntermediateInstructions
+initIntermediateInstructions : Vector2d Meters coordinates -> IntermediateInstructions
 initIntermediateInstructions pageSize =
     { instructions = ""
     , cursorPosition = Point2d.translateBy (Vector2d.xy Quantity.zero (Vector2d.yComponent pageSize)) Point2d.origin
     , fontSize = Length.points -1
     , fontIndex = -1
     }
+
+
+endIntermediateInstructions : IntermediateInstructions -> String
+endIntermediateInstructions intermediateInstructions =
+    "BT " ++ intermediateInstructions.instructions ++ "ET"
 
 
 drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
@@ -491,8 +469,15 @@ drawText fontSize fontIndex text_ position intermediate =
 
     else
         let
+            actualPosition =
+                Point2d.translateBy (Vector2d.xy Quantity.zero fontSize) position
+
             lines =
                 String.lines text_
+
+            instructions : List (IntermediateInstructions -> IntermediateInstructions)
+            instructions =
+                List.map drawLine lines |> List.intersperse (moveCursor (Vector2d.xy Quantity.zero fontSize))
         in
         intermediate
             |> (if fontIndex /= intermediate.fontIndex || fontSize /= intermediate.fontSize then
@@ -501,13 +486,13 @@ drawText fontSize fontIndex text_ position intermediate =
                 else
                     identity
                )
-            |> (if position /= intermediate.cursorPosition then
-                    moveCursor (Vector2d.from position intermediate.cursorPosition)
+            |> (if actualPosition /= intermediate.cursorPosition then
+                    moveCursor (Vector2d.from intermediate.cursorPosition actualPosition)
 
                 else
                     identity
                )
-            |> List.
+            |> (\intermediate_ -> List.foldl (\nextInstruction state -> nextInstruction state) intermediate_ instructions)
 
 
 drawLine : String -> IntermediateInstructions -> IntermediateInstructions

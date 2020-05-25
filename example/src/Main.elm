@@ -6,7 +6,7 @@ import File.Download
 import Html
 import Html.Events
 import Length
-import Pdf
+import Pdf exposing (ASizes(..), Orientation(..))
 import Point2d
 import Vector2d
 
@@ -22,18 +22,18 @@ type Msg
 pdf =
     Pdf.pdf "Example pdf"
         [ Pdf.page
-            { size = Vector2d.fromTuple Length.points ( 200, 300 )
+            { size = Pdf.paperSize Portrait A4
             , contents =
                 [ Pdf.text
                     (Length.points 32)
                     (Pdf.timesRoman { bold = False, italic = False })
                     Point2d.origin
-                    "Test"
+                    "Test\nnextline"
                 , Pdf.text
                     (Length.points 32)
                     (Pdf.helvetica { bold = False, oblique = True })
                     (Point2d.fromTuple Length.points ( 0, 0 ))
-                    "Test"
+                    "Test2"
                 ]
             }
         ]
