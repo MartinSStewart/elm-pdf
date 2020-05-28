@@ -540,14 +540,16 @@ type alias IntermediateInstructions =
     { instructions : String
     , cursorPosition : Point2d Meters PageCoordinates
     , fontSize : Length
+    , pageSize : Vector2d Meters PageCoordinates
     , fontIndex : Int
     }
 
 
-initIntermediateInstructions : Vector2d Meters coordinates -> IntermediateInstructions
+initIntermediateInstructions : Vector2d Meters PageCoordinates -> IntermediateInstructions
 initIntermediateInstructions pageSize =
     { instructions = ""
-    , cursorPosition = Point2d.translateBy (Vector2d.xy Quantity.zero (Vector2d.yComponent pageSize)) Point2d.origin
+    , cursorPosition = pageCoordToPdfCoord pageSize Point2d.origin
+    , pageSize = pageSize
     , fontSize = Length.points -1
     , fontIndex = -1
     }
@@ -559,22 +561,39 @@ endIntermediateInstructions intermediateInstructions =
 
 
 drawImage : BoundingBox2d Meters PageCoordinates -> Int -> IntermediateInstructions -> IntermediateInstructions
-drawImage bounds imageIndex intermediate =
-    { intermediate | instructions = "/Im" ++ String.fromInt imageIndex ++ " Do " }
+drawImage bounds imageIndex =
+    positionImage bounds
+        >> (\intermediate ->
+                { intermediate
+                    | instructions =
+                        intermediate.instructions ++ "/Im" ++ String.fromInt imageIndex ++ " Do Q "
+                }
+           )
 
 
-positionImage pageSize bounds =
+positionImage : BoundingBox2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
+positionImage bounds intermediate =
     let
         ( width, height ) =
             BoundingBox2d.dimensions bounds
 
         { minX, minY } =
             BoundingBox2d.extrema bounds
+
+        ( x, y ) =
+            Point2d.xy minX minY |> pageCoordToPdfCoord intermediate.pageSize |> Point2d.toTuple Length.inPoints
     in
-    [ minX, Quantity.zero, Quantity.zero, ( minY, width, Vector2d.yComponent pageSize height ]
-        |> List.map lengthToString
-        |> List.intersperse " "
-        |> (\a -> a ++ " cm ")
+    { intermediate
+        | instructions =
+            [ Length.inPoints width, 0, 0, Length.inPoints height, x, y ]
+                |> List.map floatToString
+                |> String.join " "
+                |> (\a -> intermediate.instructions ++ "q " ++ a ++ " cm ")
+    }
+
+
+pageCoordToPdfCoord pageSize coord =
+    Point2d.xy (Point2d.xCoordinate coord) (Vector2d.yComponent pageSize |> Quantity.minus (Point2d.yCoordinate coord))
 
 
 drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
@@ -728,7 +747,7 @@ objectToString object =
                         DrawingInstructions text_ ->
                             let
                                 deflate =
-                                    True
+                                    False
 
                                 textBytes =
                                     text_

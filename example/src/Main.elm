@@ -48,7 +48,12 @@ pdf =
                     (Pdf.timesRoman { bold = False, italic = False })
                     Point2d.origin
                     "Test\nnextline"
-                , Pdf.jpgImage (BoundingBox2d.singleton Point2d.origin) "image"
+                , Pdf.jpgImage
+                    (BoundingBox2d.from
+                        (Point2d.xy (Length.points 0) (Length.points 400))
+                        (Point2d.xy (Length.points 100) (Length.points 200))
+                    )
+                    "image"
                 , Pdf.text
                     (Length.points 32)
                     (Pdf.helvetica { bold = False, oblique = True })
