@@ -1,6 +1,6 @@
 module Pdf exposing
     ( pdf, page, paperSize, encoder, Pdf, Page
-    , text, Item, PageCoordinates
+    , text, jpgImage, Item, PageCoordinates
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
     , ASizes(..), Orientation(..)
     )
@@ -21,7 +21,7 @@ module Pdf exposing
 The content to show on a page.
 Currently only text can be shown and a lot of features are missing such as line automatic line breaks and unicode support.
 
-@docs text, Item, PageCoordinates
+@docs text, jpgImage, Item, PageCoordinates
 
 
 # Built-in fonts
@@ -57,7 +57,7 @@ type PageCoordinates
 
 {-| -}
 type Pdf
-    = Pdf { title : String, pages : List Page }
+    = Pdf { title : String, images : Dict ImageId JpgImage_, pages : List Page }
 
 
 {-| -}
@@ -72,11 +72,13 @@ type Item
         , text : String
         , fontSize : Length
         }
-    | RasterImage
-        { boundingBox : BoundingBox2d Meters PageCoordinates
-        , size : ( Quantity Int Pixels, Quantity Int Pixels )
-        , image : Bytes
-        }
+    | JpgImage { boundingBox : BoundingBox2d Meters PageCoordinates, imageId : ImageId }
+
+
+type alias JpgImage_ =
+    { size : ( Quantity Int Pixels, Quantity Int Pixels )
+    , jpgData : Bytes
+    }
 
 
 {-| Text displayed on a page.
@@ -91,12 +93,15 @@ text fontSize font position text_ =
         }
 
 
-image : BoundingBox2d Meters PageCoordinates -> ( Quantity Int Pixels, Quantity Int Pixels ) -> Bytes -> Item
-image boundingBox size image_ =
-    RasterImage
-        { boundingBox = boundingBox
-        , size = size
-        , image = image_
+type alias ImageId =
+    String
+
+
+jpgImage : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
+jpgImage bounds imageId =
+    JpgImage
+        { boundingBox = bounds
+        , imageId = imageId
         }
 
 
@@ -197,10 +202,11 @@ paperSize orientation size =
     Pdf.pdf "My PDF" [ Pdf.page ]
 
 -}
-pdf : String -> List Page -> Pdf
-pdf title_ pages_ =
+pdf : String -> Dict String JpgImage_ -> List Page -> Pdf
+pdf title_ images_ pages_ =
     Pdf
         { title = title_
+        , images = images_
         , pages = pages_
         }
 
@@ -213,6 +219,11 @@ title (Pdf pdf_) =
 pages : Pdf -> List Page
 pages (Pdf pdf_) =
     pdf_.pages
+
+
+images : Pdf -> Dict ImageId JpgImage_
+images (Pdf pdf_) =
+    pdf_.images
 
 
 
@@ -233,15 +244,6 @@ pages (Pdf pdf_) =
 encoder : Pdf -> BE.Encoder
 encoder pdf_ =
     let
-        infoIndirectReference =
-            { index = 1, revision = 0 }
-
-        catalogIndirectReference =
-            { index = 2, revision = 0 }
-
-        pageRootIndirectReference =
-            { index = 3, revision = 0 }
-
         info : IndirectObject
         info =
             indirectObject
@@ -254,39 +256,17 @@ encoder pdf_ =
                 catalogIndirectReference
                 (PdfDict [ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ])
 
-        pageRoot : List Font -> Int -> IndirectObject
-        pageRoot fonts fontIndexOffset =
-            indirectObject
-                pageRootIndirectReference
-                ([ ( "Kids"
-                   , allPages_
-                        |> List.map (.page >> indirectObjectToIndirectReference >> IndirectReference)
-                        |> PdfArray
-                   )
-                 , ( "Count", PdfInt (List.length (pages pdf_)) )
-                 , ( "Type", Name "Pages" )
-                 , ( "Resources"
-                   , PdfDict
-                        [ ( "Font"
-                          , List.indexedMap
-                                (\index font ->
-                                    ( "F" ++ String.fromInt (index + 1)
-                                    , IndirectReference { index = index + fontIndexOffset, revision = 0 }
-                                    )
-                                )
-                                fonts
-                                |> PdfDict
-                          )
-                        , ( "PRocSet", PdfArray [ Name "PDF", Name "Text" ] )
-                        ]
-                   )
-                 ]
-                    |> PdfDict
-                )
+        fontOffset : Int
+        fontOffset =
+            4
 
         allPages_ : List { page : IndirectObject, content : IndirectObject }
         allPages_ =
-            pageObjects usedFonts pageRootIndirectReference (List.length usedFonts + 4) (pages pdf_)
+            pageObjects
+                usedFonts
+                (images pdf_)
+                (Dict.size (images pdf_) + List.length usedFonts + fontOffset)
+                (pages pdf_)
 
         usedFonts : List Font
         usedFonts =
@@ -299,7 +279,7 @@ encoder pdf_ =
                                     TextItem { font } ->
                                         [ font ]
 
-                                    RasterImage _ ->
+                                    JpgImage _ ->
                                         []
                             )
                             items
@@ -309,8 +289,15 @@ encoder pdf_ =
         ( content, xRef ) =
             info
                 :: catalog
-                :: pageRoot usedFonts 4
+                :: pageRoot allPages_ pdf_ usedFonts fontOffset
                 :: List.indexedMap (\index font -> fontObject { index = index + 4, revision = 0 } font) usedFonts
+                ++ (dictToIndexDict (images pdf_)
+                        |> Dict.toList
+                        |> List.map
+                            (\( _, { value, index } ) ->
+                                imageObject (fontOffset + List.length usedFonts + index - 1) value
+                            )
+                   )
                 ++ List.concatMap (\a -> [ a.page, a.content ]) allPages_
                 |> contentToBytes
 
@@ -375,6 +362,77 @@ uniqueHelp f existing remaining accumulator =
                 uniqueHelp f (Set.insert computedFirst existing) rest (first :: accumulator)
 
 
+infoIndirectReference : IndirectReference_
+infoIndirectReference =
+    { index = 1, revision = 0 }
+
+
+catalogIndirectReference : IndirectReference_
+catalogIndirectReference =
+    { index = 2, revision = 0 }
+
+
+pageRootIndirectReference : IndirectReference_
+pageRootIndirectReference =
+    { index = 3, revision = 0 }
+
+
+pageRoot :
+    List { page : IndirectObject, content : IndirectObject }
+    -> Pdf
+    -> List Font
+    -> Int
+    -> IndirectObject
+pageRoot allPages_ pdf_ fonts fontIndexOffset =
+    indirectObject
+        pageRootIndirectReference
+        ([ ( "Kids"
+           , allPages_
+                |> List.map (.page >> indirectObjectToIndirectReference >> IndirectReference)
+                |> PdfArray
+           )
+         , ( "Count", PdfInt (List.length (pages pdf_)) )
+         , ( "Type", Name "Pages" )
+         , ( "Resources"
+           , PdfDict
+                (( "Font"
+                 , List.indexedMap
+                    (\index _ ->
+                        ( "F" ++ String.fromInt (index + 1)
+                        , IndirectReference { index = index + fontIndexOffset, revision = 0 }
+                        )
+                    )
+                    fonts
+                    |> PdfDict
+                 )
+                    :: ( "PRocSet", PdfArray [ Name "PDF", Name "Text" ] )
+                    :: (case dictToIndexDict (images pdf_) |> Dict.toList of
+                            head :: rest ->
+                                head
+                                    :: rest
+                                    |> List.map
+                                        (\( _, { index } ) ->
+                                            ( "Im" ++ String.fromInt index
+                                            , IndirectReference
+                                                { index = index + List.length fonts + fontIndexOffset - 1
+                                                , revision = 0
+                                                }
+                                            )
+                                        )
+                                    |> PdfDict
+                                    |> Tuple.pair "XObject"
+                                    |> List.singleton
+
+                            [] ->
+                                []
+                       )
+                )
+           )
+         ]
+            |> PdfDict
+        )
+
+
 fontObject : IndirectReference_ -> Font -> IndirectObject
 fontObject indirectReference font_ =
     indirectObject
@@ -388,12 +446,47 @@ fontObject indirectReference font_ =
         )
 
 
-pageObjects : List Font -> IndirectReference_ -> Int -> List Page -> List { page : IndirectObject, content : IndirectObject }
-pageObjects fonts pageRootIndirectReference indexStart pages_ =
+imageObject : Int -> JpgImage_ -> IndirectObject
+imageObject index image =
+    let
+        ( width, height ) =
+            Tuple.mapBoth Pixels.inPixels Pixels.inPixels image.size
+    in
+    IndirectObject
+        { index = index
+        , revision = 0
+        , isEntryPoint = False
+        , object =
+            Stream
+                [ ( "Type", Name "XObject" )
+                , ( "Subtype", Name "Image" )
+                , ( "Width", PdfInt width )
+                , ( "Height", PdfInt height )
+                , ( "ColorSpace", Name "DeviceRGB" )
+                , ( "BitsPerComponent", PdfInt 8 )
+                , ( "Filter", Name "DCTDecode" )
+                ]
+                (ResourceData image.jpgData)
+        }
+
+
+dictToIndexDict : Dict comparable a -> Dict comparable { index : Int, value : a }
+dictToIndexDict =
+    Dict.toList
+        >> List.indexedMap (\index ( key, value ) -> ( key, { index = index + 1, value = value } ))
+        >> Dict.fromList
+
+
+pageObjects : List Font -> Dict ImageId JpgImage_ -> Int -> List Page -> List { page : IndirectObject, content : IndirectObject }
+pageObjects fonts images_ indexStart pages_ =
     let
         fontLookup =
             List.indexedMap (\index font -> ( fontName font, index + 1 )) fonts
                 |> Dict.fromList
+
+        imageLookup : Dict ImageId Int
+        imageLookup =
+            dictToIndexDict images_ |> Dict.map (\_ { index } -> index)
     in
     pages_
         |> List.indexedMap
@@ -414,8 +507,11 @@ pageObjects fonts pageRootIndirectReference indexStart pages_ =
                                         in
                                         drawText text_.fontSize fontIndex text_.text text_.position previous
 
-                                    RasterImage _ ->
-                                        previous
+                                    JpgImage image ->
+                                        drawImage
+                                            image.boundingBox
+                                            (Dict.get image.imageId imageLookup |> Maybe.withDefault 1)
+                                            previous
                             )
                             (initIntermediateInstructions pageSize)
                             pageText
@@ -462,6 +558,25 @@ endIntermediateInstructions intermediateInstructions =
     "BT " ++ intermediateInstructions.instructions ++ "ET"
 
 
+drawImage : BoundingBox2d Meters PageCoordinates -> Int -> IntermediateInstructions -> IntermediateInstructions
+drawImage bounds imageIndex intermediate =
+    { intermediate | instructions = "/Im" ++ String.fromInt imageIndex ++ " Do " }
+
+
+positionImage pageSize bounds =
+    let
+        ( width, height ) =
+            BoundingBox2d.dimensions bounds
+
+        { minX, minY } =
+            BoundingBox2d.extrema bounds
+    in
+    [ minX, Quantity.zero, Quantity.zero, ( minY, width, Vector2d.yComponent pageSize height ]
+        |> List.map lengthToString
+        |> List.intersperse " "
+        |> (\a -> a ++ " cm ")
+
+
 drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
 drawText fontSize fontIndex text_ position intermediate =
     if text_ == "" then
@@ -477,7 +592,7 @@ drawText fontSize fontIndex text_ position intermediate =
 
             instructions : List (IntermediateInstructions -> IntermediateInstructions)
             instructions =
-                List.map drawLine lines |> List.intersperse (moveCursor (Vector2d.xy Quantity.zero fontSize))
+                List.map drawTextLine lines |> List.intersperse (moveCursor (Vector2d.xy Quantity.zero fontSize))
         in
         intermediate
             |> (if fontIndex /= intermediate.fontIndex || fontSize /= intermediate.fontSize then
@@ -495,8 +610,8 @@ drawText fontSize fontIndex text_ position intermediate =
             |> (\intermediate_ -> List.foldl (\nextInstruction state -> nextInstruction state) intermediate_ instructions)
 
 
-drawLine : String -> IntermediateInstructions -> IntermediateInstructions
-drawLine line intermediate =
+drawTextLine : String -> IntermediateInstructions -> IntermediateInstructions
+drawTextLine line intermediate =
     { intermediate | instructions = intermediate.instructions ++ textToString line ++ " Tj " }
 
 
@@ -613,7 +728,7 @@ objectToString object =
                         DrawingInstructions text_ ->
                             let
                                 deflate =
-                                    False
+                                    True
 
                                 textBytes =
                                     text_

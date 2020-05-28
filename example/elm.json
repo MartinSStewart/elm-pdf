@@ -15,6 +15,7 @@
             "folkertdev/elm-flate": "2.0.4",
             "ianmackenzie/elm-geometry": "3.5.0",
             "ianmackenzie/elm-units": "2.5.0",
+            "jxxcarlson/hex": "4.0.0",
             "myrho/elm-round": "1.0.4"
         },
         "indirect": {
