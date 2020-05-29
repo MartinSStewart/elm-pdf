@@ -202,13 +202,9 @@ paperSize orientation size =
     Pdf.pdf "My PDF" [ Pdf.page ]
 
 -}
-pdf : String -> Dict String JpgImage_ -> List Page -> Pdf
-pdf title_ images_ pages_ =
+pdf : { title : String, images : Dict String JpgImage_, pages : List Page } -> Pdf
+pdf =
     Pdf
-        { title = title_
-        , images = images_
-        , pages = pages_
-        }
 
 
 title : Pdf -> String
@@ -561,44 +557,37 @@ endIntermediateInstructions intermediateInstructions =
 
 
 drawImage : BoundingBox2d Meters PageCoordinates -> Int -> IntermediateInstructions -> IntermediateInstructions
-drawImage bounds imageIndex =
-    positionImage bounds
-        >> (\intermediate ->
-                { intermediate
-                    | instructions =
-                        intermediate.instructions ++ "/Im" ++ String.fromInt imageIndex ++ " Do Q "
-                }
-           )
-
-
-positionImage : BoundingBox2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
-positionImage bounds intermediate =
+drawImage bounds imageIndex intermediate =
     let
         ( width, height ) =
             BoundingBox2d.dimensions bounds
 
-        { minX, minY } =
+        { minX, maxY } =
             BoundingBox2d.extrema bounds
 
         ( x, y ) =
-            Point2d.xy minX minY |> pageCoordToPdfCoord intermediate.pageSize |> Point2d.toTuple Length.inPoints
-    in
-    { intermediate
-        | instructions =
+            Point2d.xy minX maxY |> pageCoordToPdfCoord intermediate.pageSize |> Point2d.toTuple Length.inPoints
+
+        position =
             [ Length.inPoints width, 0, 0, Length.inPoints height, x, y ]
                 |> List.map floatToString
                 |> String.join " "
-                |> (\a -> intermediate.instructions ++ "q " ++ a ++ " cm ")
+                |> (\a -> "q " ++ a ++ " cm ")
+    in
+    { intermediate
+        | instructions =
+            intermediate.instructions ++ position ++ "/Im" ++ String.fromInt imageIndex ++ " Do Q "
     }
 
 
+pageCoordToPdfCoord : Vector2d Meters PageCoordinates -> Point2d Meters PageCoordinates -> Point2d Meters a
 pageCoordToPdfCoord pageSize coord =
     Point2d.xy (Point2d.xCoordinate coord) (Vector2d.yComponent pageSize |> Quantity.minus (Point2d.yCoordinate coord))
 
 
 drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
 drawText fontSize fontIndex text_ position intermediate =
-    if text_ == "" then
+    if String.isEmpty text_ then
         intermediate
 
     else
