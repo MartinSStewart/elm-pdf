@@ -1,8 +1,8 @@
 module Pdf exposing
     ( pdf, page, paperSize, encoder, Pdf, Page
-    , text, jpgImage, Item, PageCoordinates
+    , text, Item, PageCoordinates
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , ASizes(..), Orientation(..)
+    , ASizes(..), Orientation(..), imageFit, imageStretch
     )
 
 {-| In order to use this package you'll need to install
@@ -72,7 +72,12 @@ type Item
         , text : String
         , fontSize : Length
         }
-    | JpgImage { boundingBox : BoundingBox2d Meters PageCoordinates, imageId : ImageId }
+    | JpgImage { boundingBox : ImageBounds, imageId : ImageId }
+
+
+type ImageBounds
+    = ImageStretch (BoundingBox2d Meters PageCoordinates)
+    | ImageFit (BoundingBox2d Meters PageCoordinates)
 
 
 type alias JpgImage_ =
@@ -97,10 +102,22 @@ type alias ImageId =
     String
 
 
-jpgImage : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
-jpgImage bounds imageId =
+{-| Stretch image to fill a bounding box.
+-}
+imageStretch : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
+imageStretch bounds imageId =
     JpgImage
-        { boundingBox = bounds
+        { boundingBox = ImageStretch bounds
+        , imageId = imageId
+        }
+
+
+{-| Fit image inside a bounding box while maintaining aspect ratio.
+-}
+imageFit : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
+imageFit bounds imageId =
+    JpgImage
+        { boundingBox = ImageFit bounds
         , imageId = imageId
         }
 
@@ -443,10 +460,10 @@ fontObject indirectReference font_ =
 
 
 imageObject : Int -> JpgImage_ -> IndirectObject
-imageObject index image =
+imageObject index image_ =
     let
         ( width, height ) =
-            Tuple.mapBoth Pixels.inPixels Pixels.inPixels image.size
+            Tuple.mapBoth Pixels.inPixels Pixels.inPixels image_.size
     in
     IndirectObject
         { index = index
@@ -462,7 +479,7 @@ imageObject index image =
                 , ( "BitsPerComponent", PdfInt 8 )
                 , ( "Filter", Name "DCTDecode" )
                 ]
-                (ResourceData image.jpgData)
+                (ResourceData image_.jpgData)
         }
 
 
@@ -480,9 +497,9 @@ pageObjects fonts images_ indexStart pages_ =
             List.indexedMap (\index font -> ( fontName font, index + 1 )) fonts
                 |> Dict.fromList
 
-        imageLookup : Dict ImageId Int
+        imageLookup : Dict ImageId { index : Int, value : JpgImage_ }
         imageLookup =
-            dictToIndexDict images_ |> Dict.map (\_ { index } -> index)
+            dictToIndexDict images_
     in
     pages_
         |> List.indexedMap
@@ -503,11 +520,70 @@ pageObjects fonts images_ indexStart pages_ =
                                         in
                                         drawText text_.fontSize fontIndex text_.text text_.position previous
 
-                                    JpgImage image ->
-                                        drawImage
-                                            image.boundingBox
-                                            (Dict.get image.imageId imageLookup |> Maybe.withDefault 1)
-                                            previous
+                                    JpgImage image_ ->
+                                        let
+                                            image =
+                                                Dict.get image_.imageId imageLookup
+                                                    |> Maybe.withDefault
+                                                        { index = 1
+                                                        , value =
+                                                            { size = ( Quantity.zero, Quantity.zero )
+                                                            , jpgData = BE.sequence [] |> BE.encode
+                                                            }
+                                                        }
+
+                                            maybeBounds =
+                                                case image_.boundingBox of
+                                                    ImageStretch boundingBox ->
+                                                        Just boundingBox
+
+                                                    ImageFit boundingBox ->
+                                                        let
+                                                            ( w, h ) =
+                                                                image.value.size
+
+                                                            imageAspectRatio =
+                                                                Quantity.ratio
+                                                                    (Quantity.toFloatQuantity w)
+                                                                    (Quantity.toFloatQuantity h)
+
+                                                            ( bw, bh ) =
+                                                                BoundingBox2d.dimensions boundingBox
+
+                                                            center =
+                                                                BoundingBox2d.centerPoint boundingBox
+
+                                                            aspectRatio =
+                                                                Quantity.ratio bw bh
+
+                                                            widthDiff =
+                                                                Quantity.ratio (Quantity.toFloatQuantity w) bw
+
+                                                            heightDiff =
+                                                                Quantity.ratio (Quantity.toFloatQuantity h) bh
+                                                        in
+                                                        if
+                                                            List.any
+                                                                (\a -> isNaN a || isInfinite a)
+                                                                [ aspectRatio, imageAspectRatio, widthDiff, heightDiff ]
+                                                        then
+                                                            Nothing
+
+                                                        else if imageAspectRatio < aspectRatio then
+                                                            BoundingBox2d.scaleAbout center widthDiff boundingBox |> Just
+
+                                                        else
+                                                            BoundingBox2d.scaleAbout center heightDiff boundingBox |> Just
+                                        in
+                                        case maybeBounds of
+                                            Just bounds ->
+                                                drawImage
+                                                    bounds
+                                                    image.index
+                                                    previous
+
+                                            Nothing ->
+                                                previous
                             )
                             (initIntermediateInstructions pageSize)
                             pageText
