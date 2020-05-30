@@ -579,32 +579,31 @@ adjustBoundingBox image_ ( w, h ) =
                     Quantity.ratio
                         (Quantity.toFloatQuantity w)
                         (Quantity.toFloatQuantity h)
-                        |> Debug.log "imageAspectRatio"
 
                 ( bw, bh ) =
-                    BoundingBox2d.dimensions (Debug.log "bounds" boundingBox)
+                    BoundingBox2d.dimensions boundingBox
 
                 aspectRatio =
-                    Quantity.ratio bw bh |> Debug.log "aspectRatio"
+                    Quantity.ratio bw bh
 
                 aspectRatioDiff =
-                    aspectRatio / imageAspectRatio |> Debug.log "diff"
+                    aspectRatio / imageAspectRatio
 
                 aspectRatioDiffInv =
-                    imageAspectRatio / aspectRatio |> Debug.log "diffInv"
+                    imageAspectRatio / aspectRatio
             in
             if
                 List.any
                     (\a -> isNaN a || isInfinite a)
                     [ aspectRatio, imageAspectRatio, aspectRatioDiff, aspectRatioDiffInv ]
             then
-                Nothing |> Debug.log "Nothing"
+                Nothing
 
             else if imageAspectRatio < aspectRatio then
-                boundingBoxScaleX aspectRatioDiffInv (BoundingBox2d.midX boundingBox) boundingBox |> Just |> Debug.log "a"
+                boundingBoxScaleX aspectRatioDiffInv (BoundingBox2d.midX boundingBox) boundingBox |> Just
 
             else
-                boundingBoxScaleY aspectRatioDiff (BoundingBox2d.midY boundingBox) boundingBox |> Just |> Debug.log "b"
+                boundingBoxScaleY aspectRatioDiff (BoundingBox2d.midY boundingBox) boundingBox |> Just
 
 
 boundingBoxScaleX : Float -> Quantity Float units -> BoundingBox2d units coordinates -> BoundingBox2d units coordinates

@@ -78,6 +78,7 @@ pdf images =
                 , imageData .butWhy "butWhy" ( 1280, 720 )
                 , imageData .jpeg "jpeg" ( 507, 512 )
                 , imageData .deepfriedJpeg "deepfriedJpeg" ( 507, 512 )
+                , imageData .unicode "unicode" ( 105, 54 )
                 ]
         , pages =
             [ slide
@@ -106,8 +107,11 @@ pdf images =
                     defaultFont
                     (position margin 300)
                     """It's a weird mix of ascii text and binary data
+
 Long ago it was an Adobe proprietary format but now it's an ISO standard
+
 It's really complicated and filled with legacy cruft
+
 It's (unfortunately) also a really popular format
 """
                 ]
@@ -148,11 +152,13 @@ It's (unfortunately) also a really popular format
                     """More specifically it depends on what you want to achieve.
 
 Create a standards compliant PDF parser?
-    Extremely time consuming, difficult, and unusably slow.
+        Extremely time consuming, difficult, and unusably slow
+
 Create a fully featured PDF encoder?
-    Extremely time consuming and difficult
+        Extremely time consuming and difficult
+
 Create a PDF encoder for a small subset of the standard?
-    Doable!
+        Doable!
 """
                 ]
             , slide
@@ -171,10 +177,12 @@ Create a PDF encoder for a small subset of the standard?
                     defaultFont
                     (position margin 300)
                     """At work we deal with generating PDFs sometimes
+
 It's one fewer Javascript dependencies
+
 If it gains traction and others contribute PRs, it might one day become
 a fully fledged PDF package with my name on it!
-    Aka delusions of grandeur"""
+        Aka delusions of grandeur"""
                 ]
             , slide
                 [ Pdf.text
@@ -205,26 +213,31 @@ a fully fledged PDF package with my name on it!
                 [ Pdf.text
                     titleFontSize
                     defaultFont
-                    (position margin margin)
+                    (position margin (margin - 20))
                     "What can't it do?"
+                , Pdf.imageFit
+                    (BoundingBox2d.withDimensions ( Length.points 200, Length.points 95 ) (position (margin + 955) 232))
+                    "unicode"
                 , Pdf.text
                     normalFontSize
                     defaultFont
                     (position margin 200)
-                    """Unicode characters: 你好 👋
+                    """Unicode characters: 你好 👋   vs
+
 Automatically line breaking text that is too long to fit within the width of a single page
-    Or really any features for easily laying out text
-Text color or other effects
+        Or really any features for easily laying out text
+
 Fonts that aren't Courier, Helvetica, Times Roman, or Wingdings
+
 ONLY jpeg images"""
                 , Pdf.imageFit
-                    (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 750))
+                    (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 780))
                     "deepfriedJpeg"
                 , Pdf.text
                     normalFontSize
                     defaultFont
                     (position margin 950)
-                    "All that other stuff like embedding buttons, links, videos, encryption, etc."
+                    "All that other stuff like text effects, buttons, links, videos, etc."
                 ]
             , slide
                 [ Pdf.text
@@ -236,8 +249,7 @@ ONLY jpeg images"""
                     normalFontSize
                     defaultFont
                     (position margin 300)
-                    """You probably guessed it but this presentation was made with this
-PDF package."""
+                    """As you probably guessed, this presentation was generated with Elm code."""
                 ]
             ]
         }
@@ -256,12 +268,13 @@ update msg model =
                 newLoading =
                     Dict.insert imageName result loading
             in
-            ( Maybe.map4
+            ( Maybe.map5
                 Loaded_
                 (Dict.get "pdfLogo" newLoading)
                 (Dict.get "butWhy" newLoading)
                 (Dict.get "jpeg" newLoading)
                 (Dict.get "deepfriedJpeg" newLoading)
+                (Dict.get "unicode" newLoading)
                 |> Maybe.map (pdf >> Loaded)
                 |> Maybe.withDefault (Loading newLoading)
             , Cmd.none
@@ -318,6 +331,7 @@ type alias Loaded_ =
     , butWhy : Result Http.Error Bytes
     , jpeg : Result Http.Error Bytes
     , deepfriedJpeg : Result Http.Error Bytes
+    , unicode : Result Http.Error Bytes
     }
 
 
@@ -328,6 +342,7 @@ init _ =
         , getImage "butWhy" "https://cors-anywhere.herokuapp.com/https://i.ytimg.com/vi/3Z9yK3sMDUU/maxresdefault.jpg"
         , getImage "jpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251113011019776/jpeg.jpg"
         , getImage "deepfriedJpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251175271268352/deepfried_jpeg.jpg"
+        , getImage "unicode" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716292238086242344/wave.jpg"
         ]
     )
 
