@@ -3,7 +3,6 @@ module Main exposing (main)
 import BoundingBox2d
 import Browser
 import Bytes exposing (Bytes)
-import Bytes.Decode
 import Bytes.Encode
 import Dict exposing (Dict)
 import File.Download
@@ -11,11 +10,10 @@ import Hex.Convert
 import Html exposing (Html)
 import Html.Events
 import Http exposing (Error(..), Response(..))
-import Length
-import Pdf exposing (ASizes(..), Orientation(..))
+import Length exposing (Length, Meters)
+import Pdf exposing (ASizes(..), Orientation(..), PageCoordinates, Pdf)
 import Pixels
-import Point2d
-import Quantity
+import Point2d exposing (Point2d)
 import Vector2d
 
 
@@ -33,11 +31,11 @@ imageMissing =
 
 
 titleFontSize =
-    Length.points 36
+    Length.points 100
 
 
 normalFontSize =
-    Length.points 16
+    Length.points 50
 
 
 slide : List Pdf.Item -> Pdf.Page
@@ -48,13 +46,17 @@ slide contents =
         }
 
 
-position : Float -> Float -> Point2d.Point2d units coordinates
+position : Float -> Float -> Point2d Meters PageCoordinates
 position x y =
     Point2d.xy (Length.points x) (Length.points y)
 
 
+defaultFont =
+    Pdf.helvetica { bold = False, oblique = False }
+
+
 margin =
-    40
+    100
 
 
 pdf : Loaded_ -> Bytes
@@ -72,37 +74,170 @@ pdf images =
         { title = "PDF presentation"
         , images =
             Dict.fromList
-                [ imageData .pdfLogo "pdfLogo" ( 580, 375 )
+                [ imageData .pdfLogo "pdfLogo" ( 259, 257 )
+                , imageData .butWhy "butWhy" ( 1280, 720 )
+                , imageData .jpeg "jpeg" ( 507, 512 )
+                , imageData .deepfriedJpeg "deepfriedJpeg" ( 507, 512 )
                 ]
         , pages =
             [ slide
                 [ Pdf.text
                     titleFontSize
-                    (Pdf.helvetica { bold = False, oblique = False })
-                    (position margin 500)
+                    defaultFont
+                    (position margin 400)
                     "PDFs in Elm"
                 , Pdf.text
                     normalFontSize
-                    (Pdf.helvetica { bold = False, oblique = False })
+                    defaultFont
                     (position margin 550)
                     "By Martin Stewart"
                 , Pdf.imageFit
-                    (BoundingBox2d.fromExtrema
-                        { minX = Quantity.zero, maxX = Length.points 1920, minY = Quantity.zero, maxY = Length.points 1080 }
-                    )
+                    (BoundingBox2d.withDimensions ( Length.points 259, Length.points 257 ) (position 1000 500))
                     "pdfLogo"
                 ]
             , slide
                 [ Pdf.text
                     titleFontSize
-                    (Pdf.helvetica { bold = False, oblique = False })
-                    (position margin 500)
-                    "PDFs in Elm"
+                    defaultFont
+                    (position margin margin)
+                    "What's a PDF anyway?"
                 , Pdf.text
                     normalFontSize
-                    (Pdf.helvetica { bold = False, oblique = False })
-                    (position margin 550)
-                    "By Martin Stewart"
+                    defaultFont
+                    (position margin 300)
+                    """It's a weird mix of ascii text and binary data
+Long ago it was an Adobe proprietary format but now it's an ISO standard
+It's really complicated and filled with legacy cruft
+It's (unfortunately) also a really popular format
+"""
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "Lets add support for it using pure Elm!"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    "How hard can it be?"
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "Answer"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    "It depends."
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "Answer continued..."
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    """More specifically it depends on what you want to achieve.
+
+Create a standards compliant PDF parser?
+    Extremely time consuming, difficult, and unusably slow.
+Create a fully featured PDF encoder?
+    Extremely time consuming and difficult
+Create a PDF encoder for a small subset of the standard?
+    Doable!
+"""
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position 800 margin)
+                    "But why?"
+                , Pdf.imageFit
+                    (BoundingBox2d.withDimensions ( Length.points 1280, Length.points 720 ) (position 960 600))
+                    "butWhy"
+                ]
+            , slide
+                [ Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    """At work we deal with generating PDFs sometimes
+It's one fewer Javascript dependencies
+If it gains traction and others contribute PRs, it might one day become
+a fully fledged PDF package with my name on it!
+    Aka delusions of grandeur"""
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "So what can it do?"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    "Ascii text!"
+                , Pdf.text
+                    normalFontSize
+                    (Pdf.timesRoman { bold = True, italic = True })
+                    (position margin 370)
+                    "Multiple fonts!"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 440)
+                    "Jpeg images!"
+                , Pdf.imageFit
+                    (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 670))
+                    "jpeg"
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "What can't it do?"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 200)
+                    """Unicode characters: 你好 👋
+Automatically line breaking text that is too long to fit within the width of a single page
+    Or really any features for easily laying out text
+Text color or other effects
+Fonts that aren't Courier, Helvetica, Times Roman, or Wingdings
+ONLY jpeg images"""
+                , Pdf.imageFit
+                    (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 750))
+                    "deepfriedJpeg"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 950)
+                    "All that other stuff like embedding buttons, links, videos, encryption, etc."
+                ]
+            , slide
+                [ Pdf.text
+                    titleFontSize
+                    defaultFont
+                    (position margin margin)
+                    "That's all folks!"
+                , Pdf.text
+                    normalFontSize
+                    defaultFont
+                    (position margin 300)
+                    """You probably guessed it but this presentation was made with this
+PDF package."""
                 ]
             ]
         }
@@ -113,32 +248,41 @@ pdf images =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
-        ( Download, Loaded images ) ->
-            ( model, File.Download.bytes "Example pdf.pdf" "application/pdf" pdf )
+        ( Download, Loaded pdfBytes ) ->
+            ( model, File.Download.bytes "Example pdf.pdf" "application/pdf" pdfBytes )
 
         ( LoadImage imageName result, Loading loading ) ->
             let
                 newLoading =
                     Dict.insert imageName result loading
             in
-            ( Maybe.map
+            ( Maybe.map4
                 Loaded_
                 (Dict.get "pdfLogo" newLoading)
-                |> Maybe.map Loaded
+                (Dict.get "butWhy" newLoading)
+                (Dict.get "jpeg" newLoading)
+                (Dict.get "deepfriedJpeg" newLoading)
+                |> Maybe.map (pdf >> Loaded)
                 |> Maybe.withDefault (Loading newLoading)
             , Cmd.none
             )
 
+        _ ->
+            ( model, Cmd.none )
 
-view : Model -> Html msg
-view model =
+
+view : Model -> Html Msg
+view _ =
     Html.button [ Html.Events.onClick Download ] [ Html.text "Download" ]
 
 
 getImage : String -> String -> Cmd Msg
 getImage imageName url =
-    Http.get
-        { url = url
+    Http.request
+        { method = "GET"
+        , headers = [ Http.header "origin" "null" ]
+        , url = url
+        , body = Http.emptyBody
         , expect =
             Http.expectBytesResponse
                 (LoadImage imageName)
@@ -159,22 +303,31 @@ getImage imageName url =
                         GoodStatus_ _ body ->
                             Ok body
                 )
+        , timeout = Nothing
+        , tracker = Nothing
         }
 
 
 type Model
     = Loading (Dict String (Result Http.Error Bytes))
-    | Loaded Loaded_
+    | Loaded Bytes
 
 
 type alias Loaded_ =
-    { pdfLogo : Result Http.Error Bytes }
+    { pdfLogo : Result Http.Error Bytes
+    , butWhy : Result Http.Error Bytes
+    , jpeg : Result Http.Error Bytes
+    , deepfriedJpeg : Result Http.Error Bytes
+    }
 
 
 init _ =
     ( Loading Dict.empty
     , Cmd.batch
-        [ getImage "pdfLogo" "https://images.techhive.com/images/article/2013/02/pdf-logo-100025338-large.jpg"
+        [ getImage "pdfLogo" "https://cors-anywhere.herokuapp.com/https://fmfencing.com/images/stories/PDF-Icon.jpg"
+        , getImage "butWhy" "https://cors-anywhere.herokuapp.com/https://i.ytimg.com/vi/3Z9yK3sMDUU/maxresdefault.jpg"
+        , getImage "jpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251113011019776/jpeg.jpg"
+        , getImage "deepfriedJpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251175271268352/deepfried_jpeg.jpg"
         ]
     )
 

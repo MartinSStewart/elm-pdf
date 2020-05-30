@@ -490,7 +490,12 @@ dictToIndexDict =
         >> Dict.fromList
 
 
-pageObjects : List Font -> Dict ImageId JpgImage_ -> Int -> List Page -> List { page : IndirectObject, content : IndirectObject }
+pageObjects :
+    List Font
+    -> Dict ImageId JpgImage_
+    -> Int
+    -> List Page
+    -> List { page : IndirectObject, content : IndirectObject }
 pageObjects fonts images_ indexStart pages_ =
     let
         fontLookup =
@@ -521,69 +526,20 @@ pageObjects fonts images_ indexStart pages_ =
                                         drawText text_.fontSize fontIndex text_.text text_.position previous
 
                                     JpgImage image_ ->
-                                        let
-                                            image =
-                                                Dict.get image_.imageId imageLookup
-                                                    |> Maybe.withDefault
-                                                        { index = 1
-                                                        , value =
-                                                            { size = ( Quantity.zero, Quantity.zero )
-                                                            , jpgData = BE.sequence [] |> BE.encode
-                                                            }
-                                                        }
-
-                                            maybeBounds =
-                                                case image_.boundingBox of
-                                                    ImageStretch boundingBox ->
-                                                        Just boundingBox
-
-                                                    ImageFit boundingBox ->
-                                                        let
-                                                            ( w, h ) =
-                                                                image.value.size
-
-                                                            imageAspectRatio =
-                                                                Quantity.ratio
-                                                                    (Quantity.toFloatQuantity w)
-                                                                    (Quantity.toFloatQuantity h)
-
-                                                            ( bw, bh ) =
-                                                                BoundingBox2d.dimensions boundingBox
-
-                                                            center =
-                                                                BoundingBox2d.centerPoint boundingBox
-
-                                                            aspectRatio =
-                                                                Quantity.ratio bw bh
-
-                                                            widthDiff =
-                                                                Quantity.ratio (Quantity.toFloatQuantity w) bw
-
-                                                            heightDiff =
-                                                                Quantity.ratio (Quantity.toFloatQuantity h) bh
-                                                        in
-                                                        if
-                                                            List.any
-                                                                (\a -> isNaN a || isInfinite a)
-                                                                [ aspectRatio, imageAspectRatio, widthDiff, heightDiff ]
-                                                        then
-                                                            Nothing
-
-                                                        else if imageAspectRatio < aspectRatio then
-                                                            BoundingBox2d.scaleAbout center widthDiff boundingBox |> Just
-
-                                                        else
-                                                            BoundingBox2d.scaleAbout center heightDiff boundingBox |> Just
-                                        in
-                                        case maybeBounds of
-                                            Just bounds ->
-                                                drawImage
-                                                    bounds
-                                                    image.index
-                                                    previous
-
+                                        case Dict.get image_.imageId imageLookup of
                                             Nothing ->
                                                 previous
+
+                                            Just image ->
+                                                case adjustBoundingBox image_ image.value.size of
+                                                    Just bounds ->
+                                                        drawImage
+                                                            bounds
+                                                            image.index
+                                                            previous
+
+                                                    Nothing ->
+                                                        previous
                             )
                             (initIntermediateInstructions pageSize)
                             pageText
@@ -606,6 +562,85 @@ pageObjects fonts images_ indexStart pages_ =
                         (Stream [] streamContent)
                 }
             )
+
+
+adjustBoundingBox :
+    { a | boundingBox : ImageBounds }
+    -> ( Quantity Int Pixels, Quantity Int Pixels )
+    -> Maybe (BoundingBox2d Meters PageCoordinates)
+adjustBoundingBox image_ ( w, h ) =
+    case image_.boundingBox of
+        ImageStretch boundingBox ->
+            Just boundingBox
+
+        ImageFit boundingBox ->
+            let
+                imageAspectRatio =
+                    Quantity.ratio
+                        (Quantity.toFloatQuantity w)
+                        (Quantity.toFloatQuantity h)
+                        |> Debug.log "imageAspectRatio"
+
+                ( bw, bh ) =
+                    BoundingBox2d.dimensions (Debug.log "bounds" boundingBox)
+
+                aspectRatio =
+                    Quantity.ratio bw bh |> Debug.log "aspectRatio"
+
+                aspectRatioDiff =
+                    aspectRatio / imageAspectRatio |> Debug.log "diff"
+
+                aspectRatioDiffInv =
+                    imageAspectRatio / aspectRatio |> Debug.log "diffInv"
+            in
+            if
+                List.any
+                    (\a -> isNaN a || isInfinite a)
+                    [ aspectRatio, imageAspectRatio, aspectRatioDiff, aspectRatioDiffInv ]
+            then
+                Nothing |> Debug.log "Nothing"
+
+            else if imageAspectRatio < aspectRatio then
+                boundingBoxScaleX aspectRatioDiffInv (BoundingBox2d.midX boundingBox) boundingBox |> Just |> Debug.log "a"
+
+            else
+                boundingBoxScaleY aspectRatioDiff (BoundingBox2d.midY boundingBox) boundingBox |> Just |> Debug.log "b"
+
+
+boundingBoxScaleX : Float -> Quantity Float units -> BoundingBox2d units coordinates -> BoundingBox2d units coordinates
+boundingBoxScaleX scaleBy xPosition bounds =
+    BoundingBox2d.fromExtrema
+        { minX =
+            BoundingBox2d.minX bounds
+                |> Quantity.minus xPosition
+                |> Quantity.multiplyBy scaleBy
+                |> Quantity.plus xPosition
+        , maxX =
+            BoundingBox2d.maxX bounds
+                |> Quantity.minus xPosition
+                |> Quantity.multiplyBy scaleBy
+                |> Quantity.plus xPosition
+        , minY = BoundingBox2d.minY bounds
+        , maxY = BoundingBox2d.maxY bounds
+        }
+
+
+boundingBoxScaleY : Float -> Quantity Float units -> BoundingBox2d units coordinates -> BoundingBox2d units coordinates
+boundingBoxScaleY scaleBy yPosition bounds =
+    BoundingBox2d.fromExtrema
+        { minY =
+            BoundingBox2d.minY bounds
+                |> Quantity.minus yPosition
+                |> Quantity.multiplyBy scaleBy
+                |> Quantity.plus yPosition
+        , maxY =
+            BoundingBox2d.maxY bounds
+                |> Quantity.minus yPosition
+                |> Quantity.multiplyBy scaleBy
+                |> Quantity.plus yPosition
+        , minX = BoundingBox2d.minX bounds
+        , maxX = BoundingBox2d.maxX bounds
+        }
 
 
 type alias IntermediateInstructions =
