@@ -801,7 +801,13 @@ pageCoordToPdfCoord pageSize coord =
     Point2d.xy (Point2d.xCoordinate coord) (Vector2d.yComponent pageSize |> Quantity.minus (Point2d.yCoordinate coord))
 
 
-drawText : Length -> Int -> String -> Point2d Meters PageCoordinates -> IntermediateInstructions -> IntermediateInstructions
+drawText :
+    Length
+    -> Int
+    -> String
+    -> Point2d Meters PageCoordinates
+    -> IntermediateInstructions
+    -> IntermediateInstructions
 drawText fontSize fontIndex text_ position intermediate =
     if String.isEmpty text_ then
         intermediate
@@ -842,7 +848,13 @@ drawTextLine line intermediate =
 setFont : Int -> Length -> IntermediateInstructions -> IntermediateInstructions
 setFont fontIndex fontSize intermediate =
     { intermediate
-        | instructions = intermediate.instructions ++ "/F" ++ String.fromInt fontIndex ++ " " ++ lengthToString fontSize ++ " Tf "
+        | instructions =
+            intermediate.instructions
+                ++ "/F"
+                ++ String.fromInt fontIndex
+                ++ " "
+                ++ lengthToString fontSize
+                ++ " Tf "
     }
 
 
@@ -875,6 +887,7 @@ contentToBytes =
         >> (\( content, xRef, _ ) -> ( content, List.reverse xRef ))
 
 
+header : Bytes
 header =
     BE.sequence
         [ "%PDF-" ++ pdfVersion ++ "\n%" |> BE.string
@@ -889,6 +902,7 @@ header =
         |> BE.encode
 
 
+pdfVersion : String
 pdfVersion =
     "1.7"
 
