@@ -2,7 +2,7 @@ module Pdf exposing
     ( pdf, page, paperSize, encoder, Pdf, Page
     , text, Item, PageCoordinates
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , ASizes(..), Orientation(..), imageFit, imageStretch
+    , ASizes(..), Image, ImageId, Orientation(..), imageFit, imageSize, imageStretch, jpeg, toBytes
     )
 
 {-| In order to use this package you'll need to install
@@ -35,6 +35,7 @@ Custom fonts have to be embedded in the file in order to be used and this packag
 
 import BoundingBox2d exposing (BoundingBox2d)
 import Bytes exposing (Bytes)
+import Bytes.Decode as BD
 import Bytes.Encode as BE
 import Dict exposing (Dict)
 import Flate
@@ -57,7 +58,7 @@ type PageCoordinates
 
 {-| -}
 type Pdf
-    = Pdf { title : String, images : Dict ImageId JpgImage_, pages : List Page }
+    = Pdf { title : String, pages : List Page }
 
 
 {-| -}
@@ -72,7 +73,7 @@ type Item
         , text : String
         , fontSize : Length
         }
-    | JpgImage { boundingBox : ImageBounds, imageId : ImageId }
+    | ImageItem { boundingBox : ImageBounds, image : Image }
 
 
 type ImageBounds
@@ -80,10 +81,95 @@ type ImageBounds
     | ImageFit (BoundingBox2d Meters PageCoordinates)
 
 
-type alias JpgImage_ =
-    { size : ( Quantity Int Pixels, Quantity Int Pixels )
-    , jpgData : Bytes
-    }
+type Image
+    = JpegImage
+        { imageId : String
+        , size : ( Quantity Int Pixels, Quantity Int Pixels )
+        , jpegData : Bytes
+        }
+
+
+imageId : Image -> ImageId
+imageId (JpegImage image) =
+    image.imageId
+
+
+jpegSizeDecoder : BD.Decoder ( Quantity Int Pixels, Quantity Int Pixels )
+jpegSizeDecoder =
+    BD.map2 (\a b -> a == 0xFF && b == 0xD8)
+        BD.unsignedInt8
+        BD.unsignedInt8
+        |> BD.andThen
+            (\validHeader ->
+                if validHeader then
+                    BD.loop ()
+                        (\() ->
+                            BD.andThen
+                                (\value ->
+                                    if value == 0xFF then
+                                        BD.andThen
+                                            (\value_ ->
+                                                if value_ == 0xC0 || value_ == 0xC2 then
+                                                    BD.succeed (BD.Done ())
+
+                                                else
+                                                    BD.succeed (BD.Loop ())
+                                            )
+                                            BD.unsignedInt8
+
+                                    else
+                                        BD.succeed (BD.Loop ())
+                                )
+                                BD.unsignedInt8
+                        )
+
+                else
+                    BD.fail
+            )
+        |> BD.andThen
+            (\_ ->
+                BD.map3 (\_ height width -> ( Pixels.pixels width, Pixels.pixels height ))
+                    (BD.bytes 3)
+                    (BD.unsignedInt16 Bytes.BE)
+                    (BD.unsignedInt16 Bytes.BE)
+            )
+
+
+imageSize : Image -> ( Quantity Int Pixels, Quantity Int Pixels )
+imageSize image =
+    case image of
+        JpegImage { size } ->
+            size
+
+
+{-| Create a jpeg image. The string provided is an identifier. Make sure it's unique for each image.
+-}
+jpeg : ImageId -> Bytes -> Maybe Image
+jpeg imageId_ bytes =
+    case BD.decode jpegSizeDecoder bytes of
+        Just size ->
+            { imageId = imageId_
+            , size = size
+            , jpegData = bytes
+            }
+                |> JpegImage
+                |> Just
+
+        Nothing ->
+            Nothing
+
+
+
+--{-| Same as [`jpeg`](#jpeg) but you provide the image dimensions yourself.
+--This is less safe but might be necessary if you have a large jpeg that's slow to parse.
+---}
+--unsafeJpeg : ImageId -> Bytes -> ( Quantity Int Pixels, Quantity Int Pixels ) -> Image
+--unsafeJpeg imageId_ bytes size =
+--    JpegImage
+--        { imageId = imageId_
+--        , size = size
+--        , jpegData = bytes
+--        }
 
 
 {-| Text displayed on a page.
@@ -104,21 +190,21 @@ type alias ImageId =
 
 {-| Stretch image to fill a bounding box.
 -}
-imageStretch : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
-imageStretch bounds imageId =
-    JpgImage
+imageStretch : BoundingBox2d Meters PageCoordinates -> Image -> Item
+imageStretch bounds image =
+    ImageItem
         { boundingBox = ImageStretch bounds
-        , imageId = imageId
+        , image = image
         }
 
 
 {-| Fit image inside a bounding box while maintaining aspect ratio.
 -}
-imageFit : BoundingBox2d Meters PageCoordinates -> ImageId -> Item
-imageFit bounds imageId =
-    JpgImage
+imageFit : BoundingBox2d Meters PageCoordinates -> Image -> Item
+imageFit bounds image =
+    ImageItem
         { boundingBox = ImageFit bounds
-        , imageId = imageId
+        , image = image
         }
 
 
@@ -213,13 +299,8 @@ paperSize orientation size =
 
 
 {-| Create a PDF.
-
-    import Pdf
-
-    Pdf.pdf "My PDF" [ Pdf.page ]
-
 -}
-pdf : { title : String, images : Dict String JpgImage_, pages : List Page } -> Pdf
+pdf : { title : String, pages : List Page } -> Pdf
 pdf =
     Pdf
 
@@ -234,13 +315,34 @@ pages (Pdf pdf_) =
     pdf_.pages
 
 
-images : Pdf -> Dict ImageId JpgImage_
-images (Pdf pdf_) =
-    pdf_.images
+images : Pdf -> Dict ImageId Image
+images =
+    pages
+        >> List.concatMap
+            (\(Page _ items) ->
+                items
+                    |> List.filterMap
+                        (\item ->
+                            case item of
+                                ImageItem { image } ->
+                                    Just ( imageId image, image )
+
+                                TextItem _ ->
+                                    Nothing
+                        )
+            )
+        >> Dict.fromList
 
 
 
 --- ENCODE ---
+
+
+{-| Convert PDF to binary data.
+-}
+toBytes : Pdf -> Bytes
+toBytes pdf_ =
+    BE.encode (encoder pdf_)
 
 
 {-| An encoder for converting the PDF to binary data.
@@ -292,7 +394,7 @@ encoder pdf_ =
                                     TextItem { font } ->
                                         [ font ]
 
-                                    JpgImage _ ->
+                                    ImageItem _ ->
                                         []
                             )
                             items
@@ -459,11 +561,11 @@ fontObject indirectReference font_ =
         )
 
 
-imageObject : Int -> JpgImage_ -> IndirectObject
-imageObject index image_ =
+imageObject : Int -> Image -> IndirectObject
+imageObject index (JpegImage image) =
     let
         ( width, height ) =
-            Tuple.mapBoth Pixels.inPixels Pixels.inPixels image_.size
+            Tuple.mapBoth Pixels.inPixels Pixels.inPixels image.size
     in
     IndirectObject
         { index = index
@@ -479,7 +581,7 @@ imageObject index image_ =
                 , ( "BitsPerComponent", PdfInt 8 )
                 , ( "Filter", Name "DCTDecode" )
                 ]
-                (ResourceData image_.jpgData)
+                (ResourceData image.jpegData)
         }
 
 
@@ -492,7 +594,7 @@ dictToIndexDict =
 
 pageObjects :
     List Font
-    -> Dict ImageId JpgImage_
+    -> Dict ImageId Image
     -> Int
     -> List Page
     -> List { page : IndirectObject, content : IndirectObject }
@@ -502,7 +604,7 @@ pageObjects fonts images_ indexStart pages_ =
             List.indexedMap (\index font -> ( fontName font, index + 1 )) fonts
                 |> Dict.fromList
 
-        imageLookup : Dict ImageId { index : Int, value : JpgImage_ }
+        imageLookup : Dict ImageId { index : Int, value : Image }
         imageLookup =
             dictToIndexDict images_
     in
@@ -525,13 +627,17 @@ pageObjects fonts images_ indexStart pages_ =
                                         in
                                         drawText text_.fontSize fontIndex text_.text text_.position previous
 
-                                    JpgImage image_ ->
-                                        case Dict.get image_.imageId imageLookup of
+                                    ImageItem image_ ->
+                                        case Dict.get (imageId image_.image) imageLookup of
                                             Nothing ->
                                                 previous
 
                                             Just image ->
-                                                case adjustBoundingBox image_ image.value.size of
+                                                let
+                                                    (JpegImage imageData) =
+                                                        image.value
+                                                in
+                                                case adjustBoundingBox image_ imageData.size of
                                                     Just bounds ->
                                                         drawImage
                                                             bounds

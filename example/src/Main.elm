@@ -61,25 +61,8 @@ margin =
 
 pdf : Loaded_ -> Bytes
 pdf images =
-    let
-        imageData getter name ( w, h ) =
-            case getter images of
-                Ok image ->
-                    ( name, { size = ( Pixels.pixels w, Pixels.pixels h ), jpgData = image } )
-
-                Err _ ->
-                    ( name, { size = ( Pixels.pixels 40, Pixels.pixels 40 ), jpgData = imageMissing } )
-    in
     Pdf.pdf
         { title = "PDF presentation"
-        , images =
-            Dict.fromList
-                [ imageData .pdfLogo "pdfLogo" ( 259, 257 )
-                , imageData .butWhy "butWhy" ( 1280, 720 )
-                , imageData .jpeg "jpeg" ( 507, 512 )
-                , imageData .deepfriedJpeg "deepfriedJpeg" ( 507, 512 )
-                , imageData .unicode "unicode" ( 105, 54 )
-                ]
         , pages =
             [ slide
                 [ Pdf.text
@@ -94,7 +77,7 @@ pdf images =
                     "By Martin Stewart"
                 , Pdf.imageFit
                     (BoundingBox2d.withDimensions ( Length.points 259, Length.points 257 ) (position 1000 500))
-                    "pdfLogo"
+                    images.pdfLogo
                 ]
             , slide
                 [ Pdf.text
@@ -169,7 +152,7 @@ Create a PDF encoder for a small subset of the standard?
                     "But why?"
                 , Pdf.imageFit
                     (BoundingBox2d.withDimensions ( Length.points 1280, Length.points 720 ) (position 960 600))
-                    "butWhy"
+                    images.butWhy
                 ]
             , slide
                 [ Pdf.text
@@ -207,7 +190,7 @@ a fully fledged PDF package with my name on it!
                     "Jpeg images!"
                 , Pdf.imageFit
                     (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 670))
-                    "jpeg"
+                    images.jpeg
                 ]
             , slide
                 [ Pdf.text
@@ -217,7 +200,7 @@ a fully fledged PDF package with my name on it!
                     "What can't it do?"
                 , Pdf.imageFit
                     (BoundingBox2d.withDimensions ( Length.points 200, Length.points 95 ) (position (margin + 955) 232))
-                    "unicode"
+                    images.unicode
                 , Pdf.text
                     normalFontSize
                     defaultFont
@@ -232,7 +215,7 @@ Fonts that aren't Courier, Helvetica, Times Roman, or Wingdings
 ONLY jpeg images"""
                 , Pdf.imageFit
                     (BoundingBox2d.withDimensions ( Length.points 300, Length.points 300 ) (position (margin + 150) 780))
-                    "deepfriedJpeg"
+                    images.deepfriedJpeg
                 , Pdf.text
                     normalFontSize
                     defaultFont
@@ -249,12 +232,11 @@ ONLY jpeg images"""
                     normalFontSize
                     defaultFont
                     (position margin 300)
-                    """As you probably guessed, this presentation was generated with Elm code."""
+                    "As you probably guessed, this presentation was generated with Elm code."
                 ]
             ]
         }
-        |> Pdf.encoder
-        |> Bytes.Encode.encode
+        |> Pdf.toBytes
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -267,14 +249,27 @@ update msg model =
             let
                 newLoading =
                     Dict.insert imageName result loading
+
+                getImage_ name =
+                    case Dict.get name newLoading of
+                        Just httpResult ->
+                            case httpResult of
+                                Ok bytes ->
+                                    Pdf.jpeg name bytes
+
+                                Err _ ->
+                                    Nothing
+
+                        Nothing ->
+                            Nothing
             in
             ( Maybe.map5
                 Loaded_
-                (Dict.get "pdfLogo" newLoading)
-                (Dict.get "butWhy" newLoading)
-                (Dict.get "jpeg" newLoading)
-                (Dict.get "deepfriedJpeg" newLoading)
-                (Dict.get "unicode" newLoading)
+                (getImage_ "pdfLogo")
+                (getImage_ "butWhy")
+                (getImage_ "jpeg")
+                (getImage_ "deepfriedJpeg")
+                (getImage_ "unicode")
                 |> Maybe.map (pdf >> Loaded)
                 |> Maybe.withDefault (Loading newLoading)
             , Cmd.none
@@ -285,8 +280,17 @@ update msg model =
 
 
 view : Model -> Html Msg
-view _ =
-    Html.button [ Html.Events.onClick Download ] [ Html.text "Download" ]
+view model =
+    case model of
+        Loading dict ->
+            "Loading... "
+                ++ String.fromInt (Dict.size dict)
+                ++ "/"
+                ++ String.fromInt (List.length imagesToLoad)
+                |> Html.text
+
+        Loaded _ ->
+            Html.button [ Html.Events.onClick Download ] [ Html.text "Download" ]
 
 
 getImage : String -> String -> Cmd Msg
@@ -327,23 +331,26 @@ type Model
 
 
 type alias Loaded_ =
-    { pdfLogo : Result Http.Error Bytes
-    , butWhy : Result Http.Error Bytes
-    , jpeg : Result Http.Error Bytes
-    , deepfriedJpeg : Result Http.Error Bytes
-    , unicode : Result Http.Error Bytes
+    { pdfLogo : Pdf.Image
+    , butWhy : Pdf.Image
+    , jpeg : Pdf.Image
+    , deepfriedJpeg : Pdf.Image
+    , unicode : Pdf.Image
     }
+
+
+imagesToLoad =
+    [ getImage "pdfLogo" "https://cors-anywhere.herokuapp.com/https://fmfencing.com/images/stories/PDF-Icon.jpg"
+    , getImage "butWhy" "https://cors-anywhere.herokuapp.com/https://i.ytimg.com/vi/3Z9yK3sMDUU/maxresdefault.jpg"
+    , getImage "jpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251113011019776/jpeg.jpg"
+    , getImage "deepfriedJpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251175271268352/deepfried_jpeg.jpg"
+    , getImage "unicode" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716292238086242344/wave.jpg"
+    ]
 
 
 init _ =
     ( Loading Dict.empty
-    , Cmd.batch
-        [ getImage "pdfLogo" "https://cors-anywhere.herokuapp.com/https://fmfencing.com/images/stories/PDF-Icon.jpg"
-        , getImage "butWhy" "https://cors-anywhere.herokuapp.com/https://i.ytimg.com/vi/3Z9yK3sMDUU/maxresdefault.jpg"
-        , getImage "jpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251113011019776/jpeg.jpg"
-        , getImage "deepfriedJpeg" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716251175271268352/deepfried_jpeg.jpg"
-        , getImage "unicode" "https://cors-anywhere.herokuapp.com/https://cdn.discordapp.com/attachments/168212010817814528/716292238086242344/wave.jpg"
-        ]
+    , Cmd.batch imagesToLoad
     )
 
 
