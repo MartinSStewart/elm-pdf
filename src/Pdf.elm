@@ -367,7 +367,7 @@ encoder pdf_ =
 
         catalog : IndirectObject
         catalog =
-            entryPoint
+            indirectObject
                 catalogIndirectReference
                 (PdfDict [ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ])
 
@@ -416,8 +416,8 @@ encoder pdf_ =
                 ++ List.concatMap (\a -> [ a.page, a.content ]) allPages_
                 |> contentToBytes
 
-        xRefToString : XRef -> BE.Encoder
-        xRefToString (XRef xRefs) =
+        encodeXRef : XRef -> BE.Encoder
+        encodeXRef (XRef xRefs) =
             let
                 xRefLine { offset } =
                     String.padLeft 10 '0' (String.fromInt offset)
@@ -435,7 +435,7 @@ encoder pdf_ =
                     ++ (List.map xRefLine xRefs |> String.concat)
                     ++ "trailer\n"
                     |> BE.string
-                , pdfDictToString
+                , encodePdfDict
                     [ ( "Size", PdfInt xRefCount )
                     , ( "Info", IndirectReference infoIndirectReference )
                     , ( "Root", IndirectReference catalogIndirectReference )
@@ -445,7 +445,7 @@ encoder pdf_ =
     in
     BE.sequence
         [ BE.bytes content
-        , xRefToString (XRef xRef)
+        , encodeXRef (XRef xRef)
         , String.fromInt (Bytes.width content) |> BE.string
         , BE.string "\n%%EOF"
         ]
@@ -570,7 +570,6 @@ imageObject index (JpegImage image) =
     IndirectObject
         { index = index
         , revision = 0
-        , isEntryPoint = False
         , object =
             Stream
                 [ ( "Type", Name "XObject" )
@@ -875,7 +874,7 @@ contentToBytes =
     List.sortBy indirectObjectIndex
         >> List.foldl
             (\indirectObject_ ( content_, xRef_, index ) ->
-                ( BE.sequence [ BE.bytes content_, indirectObjectToString indirectObject_, BE.string "\n" ] |> BE.encode
+                ( BE.sequence [ BE.bytes content_, encodeIndirectObject indirectObject_, BE.string "\n" ] |> BE.encode
                 , { offset = Bytes.width content_ } :: xRef_
                 , index + 1
                 )
@@ -931,8 +930,8 @@ type Object
     | IndirectReference IndirectReference_
 
 
-objectToString : Object -> BE.Encoder
-objectToString object =
+encodeObject : Object -> BE.Encoder
+encodeObject object =
     case object of
         Name name ->
             nameToString name |> BE.string
@@ -944,12 +943,12 @@ objectToString object =
             String.fromInt int |> BE.string
 
         PdfDict pdfDict ->
-            pdfDictToString pdfDict
+            encodePdfDict pdfDict
 
         PdfArray pdfArray ->
             let
                 contentText =
-                    List.map objectToString pdfArray |> List.intersperse (BE.string " ")
+                    List.map encodeObject pdfArray |> List.intersperse (BE.string " ")
             in
             BE.string "[ " :: contentText ++ [ BE.string " ]" ] |> BE.sequence
 
@@ -991,7 +990,7 @@ objectToString object =
                             )
             in
             BE.sequence
-                [ pdfDictToString dict2
+                [ encodePdfDict dict2
                 , BE.string "\nstream\n"
                 , BE.bytes streamContent_
                 , BE.string "\nendstream"
@@ -1019,9 +1018,9 @@ nameToString name =
     "/" ++ name
 
 
-pdfDictToString : List ( String, Object ) -> BE.Encoder
-pdfDictToString =
-    List.map (\( key, value ) -> BE.sequence [ BE.string (nameToString key ++ " "), objectToString value ])
+encodePdfDict : List ( String, Object ) -> BE.Encoder
+encodePdfDict =
+    List.map (\( key, value ) -> BE.sequence [ BE.string (nameToString key ++ " "), encodeObject value ])
         >> List.intersperse (BE.string " ")
         >> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
         >> BE.sequence
@@ -1032,17 +1031,12 @@ type alias IndirectReference_ =
 
 
 type IndirectObject
-    = IndirectObject { index : Int, revision : Int, isEntryPoint : Bool, object : Object }
+    = IndirectObject { index : Int, revision : Int, object : Object }
 
 
 indirectObject : IndirectReference_ -> Object -> IndirectObject
 indirectObject { index, revision } object =
-    IndirectObject { index = index, revision = revision, isEntryPoint = False, object = object }
-
-
-entryPoint : IndirectReference_ -> Object -> IndirectObject
-entryPoint { index, revision } object =
-    IndirectObject { index = index, revision = revision, isEntryPoint = True, object = object }
+    IndirectObject { index = index, revision = revision, object = object }
 
 
 indirectObjectToIndirectReference : IndirectObject -> IndirectReference_
@@ -1050,21 +1044,15 @@ indirectObjectToIndirectReference (IndirectObject { index, revision }) =
     { index = index, revision = revision }
 
 
-indirectObjectToString : IndirectObject -> BE.Encoder
-indirectObjectToString (IndirectObject { index, revision, isEntryPoint, object }) =
+encodeIndirectObject : IndirectObject -> BE.Encoder
+encodeIndirectObject (IndirectObject { index, revision, object }) =
     BE.sequence
         [ String.fromInt index
             ++ " "
             ++ String.fromInt revision
             ++ " obj"
-            ++ (if isEntryPoint then
-                    "  % entry point\n"
-
-                else
-                    "\n"
-               )
             |> BE.string
-        , objectToString object
+        , encodeObject object
         , BE.string "\nendobj"
         ]
 
