@@ -1,8 +1,8 @@
 module Pdf exposing
-    ( pdf, page, paperSize, encoder, Pdf, Page
-    , text, Item, PageCoordinates
+    ( pdf, page, paperSize, encoder, toBytes, Pdf, Page, ASizes(..), Orientation(..)
+    , text, imageFit, imageStretch, Item, PageCoordinates
+    , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , ASizes(..), Image, ImageId, Orientation(..), imageFit, imageSize, imageStretch, jpeg, toBytes
     )
 
 {-| In order to use this package you'll need to install
@@ -13,15 +13,26 @@ module Pdf exposing
 
 # PDF creation
 
-@docs pdf, page, paperSize, encoder, Pdf, Page
+@docs pdf, page, paperSize, encoder, toBytes, Pdf, Page, ASizes, Orientation
 
 
 # Page content
 
 The content to show on a page.
-Currently only text can be shown and a lot of features are missing such as line automatic line breaks and unicode support.
+Currently only text and images can be shown and a lot of features are missing such as automatic line breaks, unicode, and custom fonts.
 
-@docs text, jpgImage, Item, PageCoordinates
+@docs text, imageFit, imageStretch, Item, PageCoordinates
+
+
+# Image resources
+
+Before you can add an image to a page you need to load it. Currently only jpeg images are supported.
+
+Note that, the PDF standard only supports jpeg, jpeg2000 (a successor to jpeg that no one uses), and raw bitmap data.
+The best this package can possibly do is automatically convert unsupported formats (PNG images, for example) into one of those.
+For now it's up to the user to do that conversion.
+
+@docs jpeg, imageSize, Image, ImageId
 
 
 # Built-in fonts
@@ -66,6 +77,8 @@ type Page
     = Page (Vector2d Meters PageCoordinates) (List Item)
 
 
+{-| Something that gets drawn to a page.
+-}
 type Item
     = TextItem
         { position : Point2d Meters PageCoordinates
@@ -81,6 +94,8 @@ type ImageBounds
     | ImageFit (BoundingBox2d Meters PageCoordinates)
 
 
+{-| An image that we can draw onto some pages.
+-}
 type Image
     = JpegImage
         { imageId : String
@@ -135,6 +150,8 @@ jpegSizeDecoder =
             )
 
 
+{-| Get the pixel dimensions of an image.
+-}
 imageSize : Image -> ( Quantity Int Pixels, Quantity Int Pixels )
 imageSize image =
     case image of
@@ -188,7 +205,7 @@ type alias ImageId =
     String
 
 
-{-| Stretch image to fill a bounding box.
+{-| Draw an image with its width and height distorted to fill a bounding box.
 -}
 imageStretch : BoundingBox2d Meters PageCoordinates -> Image -> Item
 imageStretch bounds image =
@@ -237,7 +254,9 @@ type ASizes
     | A10
 
 
-{-| -}
+{-| The orientation of our page.
+Landscape means the long edge of the page is horizontal and portrait means the long edge of the page is vertical.
+-}
 type Orientation
     = Landscape
     | Portrait
@@ -338,11 +357,19 @@ images =
 --- ENCODE ---
 
 
-{-| Convert PDF to binary data.
+{-| Convert PDF to binary data that can be used as a PDF file.
+
+This is the same as:
+
+    import Bytes.Encode
+    import Pdf
+
+    Pdf.encoder myPdf |> Bytes.Encode.encode
+
 -}
 toBytes : Pdf -> Bytes
-toBytes pdf_ =
-    BE.encode (encoder pdf_)
+toBytes =
+    encoder >> BE.encode
 
 
 {-| An encoder for converting the PDF to binary data.
