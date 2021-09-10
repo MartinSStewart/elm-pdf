@@ -17,5 +17,6 @@ Useful links if you want to learn how PDF encoding works:
 * https://web.archive.org/web/20141010035745/http://gnupdf.org/Introduction_to_PDF
 * https://github.com/fschutt/printpdf/wiki/1.1.1-Hello-World-PDF
 * https://www.pdf-online.com/osa/validate.aspx
+* https://www.adobe.com/content/dam/acom/en/devnet/pdf/PDF32000_2008.pdf
 * https://stackoverflow.com/questions/128162/unicode-in-pdf
 * https://stackoverflow.com/questions/559467/escaping-characters-for-substitution-into-a-pdf
