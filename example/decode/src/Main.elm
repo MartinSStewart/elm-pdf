@@ -4,10 +4,11 @@ import Browser
 import Html exposing (Html)
 import Http exposing (Error(..), Response(..))
 import Pdf exposing (ASizes(..), DecodedPdf, Orientation(..), PageCoordinates, Pdf)
+import Task
 
 
 type Msg
-    = LoadedPdf (Result Http.Error (Result String DecodedPdf))
+    = LoadedPdf (Result String DecodedPdf)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -33,10 +34,33 @@ type alias Model =
 init : () -> ( Model, Cmd Msg )
 init () =
     ( {}
-    , Http.get
-        { url = "https://files.slack.com/files-pri/T05MF23NJSK-F05V1JPC48P/download/sample_energy_report.pdf?origin_team=T05MF23NJSK"
-        , expect = Http.expectBytes LoadedPdf Pdf.decoder
+    , Http.task
+        { method = "GET"
+        , headers = []
+        , body = Http.emptyBody
+        , url = "https://raw.githubusercontent.com/MartinSStewart/elm-pdf/6f46a688f3301224e5c72635143d2338958924e8/example/decode/Sample%20Energy%20Report.pdf"
+        , resolver =
+            Http.bytesResolver
+                (\response ->
+                    case response of
+                        BadUrl_ _ ->
+                            Err "Bad url"
+
+                        Timeout_ ->
+                            Err "Timed out"
+
+                        NetworkError_ ->
+                            Err "Network error"
+
+                        BadStatus_ metadata body ->
+                            Err "Bad status"
+
+                        GoodStatus_ metadata body ->
+                            Pdf.fromBytes body
+                )
+        , timeout = Nothing
         }
+        |> Task.attempt LoadedPdf
     )
 
 

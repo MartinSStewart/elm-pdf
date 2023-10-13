@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, decoder
+    , DecodedPdf, fromBytes
     )
 
 {-| In order to use this package you'll need to install
@@ -373,24 +373,24 @@ toBytes =
     encoder >> BE.encode
 
 
-decodeInt : BD.Decoder (Result String Int)
-decodeInt =
+decodeInt : Char -> BD.Decoder (Result String Int)
+decodeInt delimiter =
     decodeAndThen
         decodeUtf8Char
         (\char ->
             if Char.isDigit char then
-                decodeIntHelper char
+                decodeIntHelper delimiter char
 
             else if char == '-' then
-                decodeIntHelper char
+                decodeIntHelper delimiter char
 
             else
                 BD.succeed (Err "Not an int")
         )
 
 
-decodeIntHelper : Char -> BD.Decoder (Result String Int)
-decodeIntHelper firstChar =
+decodeIntHelper : Char -> Char -> BD.Decoder (Result String Int)
+decodeIntHelper delimiter firstChar =
     BD.loop
         [ firstChar ]
         (\list ->
@@ -398,8 +398,8 @@ decodeIntHelper firstChar =
                 |> BD.andThen
                     (\result ->
                         case result of
-                            Ok ok ->
-                                if ok == ' ' then
+                            Ok char ->
+                                if char == delimiter then
                                     case List.reverse list |> String.fromList |> String.toInt of
                                         Just int ->
                                             BD.Done (Ok int) |> BD.succeed
@@ -407,11 +407,17 @@ decodeIntHelper firstChar =
                                         Nothing ->
                                             Err "Not an int" |> BD.Done |> BD.succeed
 
-                                else if Char.isDigit ok then
-                                    ok :: list |> BD.Loop |> BD.succeed
+                                else if Char.isDigit char then
+                                    char :: list |> BD.Loop |> BD.succeed
 
                                 else
-                                    Err "Expected ' ' or digit when parsing int" |> BD.Done |> BD.succeed
+                                    "Expected "
+                                        ++ String.fromChar delimiter
+                                        ++ " or digit when parsing int, instead got "
+                                        ++ String.fromChar char
+                                        |> Err
+                                        |> BD.Done
+                                        |> BD.succeed
 
                             Err error ->
                                 Err error |> BD.Done |> BD.succeed
@@ -465,21 +471,13 @@ decodeHeader =
         (decodeSymbol "%PDF-")
         (\() ->
             decodeAndThen
-                decodeInt
+                (decodeInt '.')
                 (\majorVersion ->
                     decodeAndThen
-                        (decodeSymbol ".")
-                        (\() ->
-                            decodeAndThen
-                                decodeInt
-                                (\minorVersion ->
-                                    decodeAndThen
-                                        (decodeSymbol ".")
-                                        (\() ->
-                                            Ok { major = majorVersion, minor = minorVersion }
-                                                |> BD.succeed
-                                        )
-                                )
+                        (decodeInt '\n')
+                        (\minorVersion ->
+                            Ok { major = majorVersion, minor = minorVersion }
+                                |> BD.succeed
                         )
                 )
         )
@@ -493,14 +491,90 @@ type alias PdfVersion =
     { major : Int, minor : Int }
 
 
-decoder : BD.Decoder (Result String DecodedPdf)
-decoder =
+decoder : XRefTable -> BD.Decoder (Result String DecodedPdf)
+decoder xref =
     decodeAndThen
         decodeHeader
         (\version ->
             Ok { version = version }
                 |> BD.succeed
         )
+
+
+getXRefOffset : Bytes -> Result String Int
+getXRefOffset bytes =
+    BD.decode
+        (BD.map2
+            (\_ eofText ->
+                case String.indexes "startxref\n" eofText of
+                    [ index ] ->
+                        case String.dropLeft index eofText |> String.split "\n" of
+                            [ _, offsetText, "%%EOF" ] ->
+                                case String.toInt offsetText of
+                                    Just int ->
+                                        Ok int
+
+                                    Nothing ->
+                                        Err ("Unexpected EOF text " ++ eofText)
+
+                            _ ->
+                                Err ("Unexpected EOF text " ++ eofText)
+
+                    _ ->
+                        Err ("Unexpected EOF text " ++ eofText)
+            )
+            (BD.bytes (Bytes.width bytes - 30))
+            (BD.string 30)
+        )
+        bytes
+        |> (\maybeResult ->
+                case maybeResult of
+                    Just result ->
+                        result
+
+                    Nothing ->
+                        Err "Parsing failed"
+           )
+
+
+type alias XRefTable =
+    {}
+
+
+decodeXRef : Int -> BD.Decoder (Result String XRefTable)
+decodeXRef xRefOffset =
+    BD.map2
+        (\_ xref -> Ok {})
+        (BD.bytes xRefOffset)
+        (decodeSymbol "xref")
+
+
+fromBytes : Bytes -> Result String DecodedPdf
+fromBytes bytes =
+    case getXRefOffset bytes of
+        Ok xRefOffset ->
+            case BD.decode (decodeXRef xRefOffset) bytes of
+                Just result ->
+                    case result of
+                        Ok xRef ->
+                            BD.decode (decoder xRef) bytes
+                                |> (\maybeResult ->
+                                        case maybeResult of
+                                            Just result2 ->
+                                                result2
+
+                                            Nothing ->
+                                                Err "Parsing failed"
+                                   )
+
+                        Err error ->
+                            Err error
+
+                Nothing ->
+                    Err "Failed to decode xref"
+
+        Err error ->
+            Err error
 
 
 {-| An encoder for converting the PDF to binary data.
