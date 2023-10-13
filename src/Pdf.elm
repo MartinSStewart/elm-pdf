@@ -45,6 +45,7 @@ Custom fonts have to be embedded in the file in order to be used and this packag
 
 -}
 
+import Array exposing (Array)
 import BoundingBox2d exposing (BoundingBox2d)
 import Bytes exposing (Bytes)
 import Bytes.Decode as BD
@@ -538,15 +539,78 @@ getXRefOffset bytes =
 
 
 type alias XRefTable =
-    {}
+    { references : Array Int }
 
 
 decodeXRef : Int -> BD.Decoder (Result String XRefTable)
 decodeXRef xRefOffset =
     BD.map2
-        (\_ xref -> Ok {})
+        (\_ result -> Result.map (\references -> { references = Debug.log "ref" references }) result)
         (BD.bytes xRefOffset)
-        (decodeSymbol "xref")
+        (decodeAndThen
+            (decodeSymbol "xref\n")
+            (\() ->
+                decodeAndThen
+                    (decodeInt ' ')
+                    (\_ ->
+                        decodeAndThen
+                            (decodeInt '\n')
+                            (\objectCount ->
+                                decodeAndThen
+                                    (decodeXRefHelper objectCount)
+                                    (\xref ->
+                                        decodeAndThen
+                                            (decodeSymbol "trailer\n")
+                                            (\() ->
+                                                Ok xref |> BD.succeed
+                                            )
+                                    )
+                            )
+                    )
+            )
+        )
+
+
+decodeXRefHelper : Int -> BD.Decoder (Result String (Array Int))
+decodeXRefHelper count =
+    BD.loop
+        { remaining = count, references = Array.empty }
+        (\state ->
+            if state.remaining <= 0 then
+                state.references |> Ok |> BD.Done |> BD.succeed
+
+            else
+                decodeAndThen
+                    (decodeInt ' ')
+                    (\offset ->
+                        decodeAndThen
+                            (decodeInt ' ')
+                            (\_ ->
+                                decodeAndThen
+                                    decodeUtf8Char
+                                    (\_ ->
+                                        decodeAndThen
+                                            (decodeSymbol " \n")
+                                            (\() ->
+                                                { remaining = state.remaining - 1
+                                                , references = Array.push offset state.references
+                                                }
+                                                    |> Ok
+                                                    |> BD.succeed
+                                            )
+                                    )
+                            )
+                    )
+                    |> BD.andThen
+                        (\a ->
+                            case a of
+                                Ok ok ->
+                                    ok |> BD.Loop |> BD.succeed
+
+                                Err err ->
+                                    Err err |> BD.Done |> BD.succeed
+                        )
+        )
 
 
 fromBytes : Bytes -> Result String DecodedPdf
