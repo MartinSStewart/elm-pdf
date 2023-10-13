@@ -3,6 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
+    , DecodedPdf, decoder
     )
 
 {-| In order to use this package you'll need to install
@@ -370,6 +371,136 @@ This is the same as:
 toBytes : Pdf -> Bytes
 toBytes =
     encoder >> BE.encode
+
+
+decodeInt : BD.Decoder (Result String Int)
+decodeInt =
+    decodeAndThen
+        decodeUtf8Char
+        (\char ->
+            if Char.isDigit char then
+                decodeIntHelper char
+
+            else if char == '-' then
+                decodeIntHelper char
+
+            else
+                BD.succeed (Err "Not an int")
+        )
+
+
+decodeIntHelper : Char -> BD.Decoder (Result String Int)
+decodeIntHelper firstChar =
+    BD.loop
+        [ firstChar ]
+        (\list ->
+            decodeUtf8Char
+                |> BD.andThen
+                    (\result ->
+                        case result of
+                            Ok ok ->
+                                if ok == ' ' then
+                                    case List.reverse list |> String.fromList |> String.toInt of
+                                        Just int ->
+                                            BD.Done (Ok int) |> BD.succeed
+
+                                        Nothing ->
+                                            Err "Not an int" |> BD.Done |> BD.succeed
+
+                                else if Char.isDigit ok then
+                                    ok :: list |> BD.Loop |> BD.succeed
+
+                                else
+                                    Err "Expected ' ' or digit when parsing int" |> BD.Done |> BD.succeed
+
+                            Err error ->
+                                Err error |> BD.Done |> BD.succeed
+                    )
+        )
+
+
+decodeUtf8Char : BD.Decoder (Result String Char)
+decodeUtf8Char =
+    BD.unsignedInt8
+        |> BD.andThen
+            (\value ->
+                if value < 128 then
+                    Char.fromCode value |> Ok |> BD.succeed
+
+                else
+                    Err "Invalid UTF8 char" |> BD.succeed
+            )
+
+
+decodeSymbol : String -> BD.Decoder (Result String ())
+decodeSymbol text2 =
+    BD.string (BE.string text2 |> BE.encode |> Bytes.width)
+        |> BD.andThen
+            (\text3 ->
+                if text2 == text3 then
+                    BD.succeed (Ok ())
+
+                else
+                    BD.succeed (Err ("Expected " ++ text2 ++ " but got " ++ text3))
+            )
+
+
+decodeAndThen : BD.Decoder (Result String b) -> (b -> BD.Decoder (Result String a)) -> BD.Decoder (Result String a)
+decodeAndThen previous func =
+    BD.andThen
+        (\result ->
+            case result of
+                Ok a ->
+                    func a
+
+                Err error ->
+                    BD.succeed (Err error)
+        )
+        previous
+
+
+decodeHeader : BD.Decoder (Result String PdfVersion)
+decodeHeader =
+    decodeAndThen
+        (decodeSymbol "%PDF-")
+        (\() ->
+            decodeAndThen
+                decodeInt
+                (\majorVersion ->
+                    decodeAndThen
+                        (decodeSymbol ".")
+                        (\() ->
+                            decodeAndThen
+                                decodeInt
+                                (\minorVersion ->
+                                    decodeAndThen
+                                        (decodeSymbol ".")
+                                        (\() ->
+                                            Ok { major = majorVersion, minor = minorVersion }
+                                                |> BD.succeed
+                                        )
+                                )
+                        )
+                )
+        )
+
+
+type alias DecodedPdf =
+    { version : PdfVersion }
+
+
+type alias PdfVersion =
+    { major : Int, minor : Int }
+
+
+decoder : BD.Decoder (Result String DecodedPdf)
+decoder =
+    decodeAndThen
+        decodeHeader
+        (\version ->
+            Ok { version = version }
+                |> BD.succeed
+        )
 
 
 {-| An encoder for converting the PDF to binary data.
