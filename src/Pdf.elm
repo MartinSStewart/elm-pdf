@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, fromBytes
+    , DecodedPdf, Object(..), fromBytes, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -52,7 +52,10 @@ import Bytes.Decode as BD
 import Bytes.Encode as BE
 import Dict exposing (Dict)
 import Flate
+import Hex.Convert
 import Length exposing (Length, Meters)
+import List.Nonempty exposing (Nonempty(..))
+import Parser exposing ((|.), (|=), Parser)
 import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
 import Quantity exposing (Quantity)
@@ -485,21 +488,11 @@ decodeHeader =
 
 
 type alias DecodedPdf =
-    { version : PdfVersion }
+    { xRef : XRefTable, sections : List ( IndirectReference_, List ( String, Object ) ) }
 
 
 type alias PdfVersion =
     { major : Int, minor : Int }
-
-
-decoder : XRefTable -> BD.Decoder (Result String DecodedPdf)
-decoder xref =
-    decodeAndThen
-        decodeHeader
-        (\version ->
-            Ok { version = version }
-                |> BD.succeed
-        )
 
 
 getXRefOffset : Bytes -> Result String Int
@@ -539,100 +532,68 @@ getXRefOffset bytes =
 
 
 type alias XRefTable =
-    { references : Array Int }
-
-
-decodeXRef : Int -> BD.Decoder (Result String XRefTable)
-decodeXRef xRefOffset =
-    BD.map2
-        (\_ result -> Result.map (\references -> { references = Debug.log "ref" references }) result)
-        (BD.bytes xRefOffset)
-        (decodeAndThen
-            (decodeSymbol "xref\n")
-            (\() ->
-                decodeAndThen
-                    (decodeInt ' ')
-                    (\_ ->
-                        decodeAndThen
-                            (decodeInt '\n')
-                            (\objectCount ->
-                                decodeAndThen
-                                    (decodeXRefHelper objectCount)
-                                    (\xref ->
-                                        decodeAndThen
-                                            (decodeSymbol "trailer\n")
-                                            (\() ->
-                                                Ok xref |> BD.succeed
-                                            )
-                                    )
-                            )
-                    )
-            )
-        )
-
-
-decodeXRefHelper : Int -> BD.Decoder (Result String (Array Int))
-decodeXRefHelper count =
-    BD.loop
-        { remaining = count, references = Array.empty }
-        (\state ->
-            if state.remaining <= 0 then
-                state.references |> Ok |> BD.Done |> BD.succeed
-
-            else
-                decodeAndThen
-                    (decodeInt ' ')
-                    (\offset ->
-                        decodeAndThen
-                            (decodeInt ' ')
-                            (\_ ->
-                                decodeAndThen
-                                    decodeUtf8Char
-                                    (\_ ->
-                                        decodeAndThen
-                                            (decodeSymbol " \n")
-                                            (\() ->
-                                                { remaining = state.remaining - 1
-                                                , references = Array.push offset state.references
-                                                }
-                                                    |> Ok
-                                                    |> BD.succeed
-                                            )
-                                    )
-                            )
-                    )
-                    |> BD.andThen
-                        (\a ->
-                            case a of
-                                Ok ok ->
-                                    ok |> BD.Loop |> BD.succeed
-
-                                Err err ->
-                                    Err err |> BD.Done |> BD.succeed
-                        )
-        )
+    { references : List Int, metadata : List ( String, Object ) }
 
 
 fromBytes : Bytes -> Result String DecodedPdf
 fromBytes bytes =
     case getXRefOffset bytes of
         Ok xRefOffset ->
-            case BD.decode (decodeXRef xRefOffset) bytes of
+            let
+                xrefDecoder =
+                    BD.map2
+                        (\_ endSection -> Parser.run xRefParser endSection |> Debug.log "xref")
+                        (BD.bytes xRefOffset)
+                        (BD.string (Bytes.width bytes - xRefOffset))
+            in
+            case BD.decode xrefDecoder bytes of
                 Just result ->
                     case result of
                         Ok xRef ->
-                            BD.decode (decoder xRef) bytes
-                                |> (\maybeResult ->
-                                        case maybeResult of
-                                            Just result2 ->
-                                                result2
+                            let
+                                sections =
+                                    List.foldr
+                                        (\offset state ->
+                                            let
+                                                size =
+                                                    state.next - offset
 
-                                            Nothing ->
-                                                Err "Parsing failed"
-                                   )
+                                                result2 =
+                                                    case sliceBytes offset size bytes of
+                                                        Just endSection ->
+                                                            let
+                                                                _ =
+                                                                    Debug.log "abc" endSectionText
 
-                        Err error ->
-                            Err error
+                                                                endSectionText =
+                                                                    BD.decode (BD.string size) endSection |> Maybe.withDefault ""
+                                                            in
+                                                            Parser.run
+                                                                (topLevelObjectParser endSection endSectionText)
+                                                                endSectionText
+                                                                |> Debug.log "section"
+
+                                                        Nothing ->
+                                                            Err []
+                                            in
+                                            { next = offset
+                                            , sections =
+                                                case result2 of
+                                                    Ok ok ->
+                                                        ok :: state.sections
+
+                                                    Err error ->
+                                                        state.sections
+                                            }
+                                        )
+                                        { next = xRefOffset, sections = [] }
+                                        xRef.references
+                                        |> .sections
+                            in
+                            Ok { xRef = xRef, sections = sections }
+
+                        Err _ ->
+                            Err "Failed to decode xref"
 
                 Nothing ->
                     Err "Failed to decode xref"
@@ -800,6 +761,7 @@ pageRoot allPages_ pdf_ fonts fontIndexOffset =
         ([ ( "Kids"
            , allPages_
                 |> List.map (.page >> indirectObjectToIndirectReference >> IndirectReference)
+                |> Array.fromList
                 |> PdfArray
            )
          , ( "Count", PdfInt (List.length (pages pdf_)) )
@@ -816,7 +778,7 @@ pageRoot allPages_ pdf_ fonts fontIndexOffset =
                     fonts
                     |> PdfDict
                  )
-                    :: ( "PRocSet", PdfArray [ Name "PDF", Name "Text" ] )
+                    :: ( "PRocSet", [ Name "PDF", Name "Text" ] |> Array.fromList |> PdfArray )
                     :: (case dictToIndexDict (images pdf_) |> Dict.toList of
                             head :: rest ->
                                 head
@@ -1208,7 +1170,7 @@ mediaBox size =
         ( w, h ) =
             Vector2d.toTuple Length.inPoints size
     in
-    ( "MediaBox", PdfArray [ PdfInt 0, PdfInt 0, PdfFloat w, PdfFloat h ] )
+    ( "MediaBox", [ PdfInt 0, PdfInt 0, PdfFloat w, PdfFloat h ] |> Array.fromList |> PdfArray )
 
 
 type XRef
@@ -1220,10 +1182,11 @@ type Object
     | PdfFloat Float
     | PdfInt Int
     | PdfDict (List ( String, Object ))
-    | PdfArray (List Object)
+    | PdfArray (Array Object)
     | Text String
     | Stream (List ( String, Object )) StreamContent
     | IndirectReference IndirectReference_
+    | AngleBracketedHexString String
 
 
 encodeObject : Object -> BE.Encoder
@@ -1244,7 +1207,7 @@ encodeObject object =
         PdfArray pdfArray ->
             let
                 contentText =
-                    List.map encodeObject pdfArray |> List.intersperse (BE.string " ")
+                    Array.toList pdfArray |> List.map encodeObject |> List.intersperse (BE.string " ")
             in
             BE.string "[ " :: contentText ++ [ BE.string " ]" ] |> BE.sequence
 
@@ -1295,6 +1258,9 @@ encodeObject object =
         IndirectReference { index, revision } ->
             String.fromInt index ++ " " ++ String.fromInt revision ++ " R" |> BE.string
 
+        AngleBracketedHexString hexString ->
+            "<" ++ hexString ++ ">" |> BE.string
+
 
 textToString : String -> String
 textToString text_ =
@@ -1320,6 +1286,301 @@ encodePdfDict =
         >> List.intersperse (BE.string " ")
         >> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
         >> BE.sequence
+
+
+xRefParser : Parser XRefTable
+xRefParser =
+    Parser.succeed (\list metadata -> { references = list, metadata = metadata })
+        |. Parser.symbol "xref"
+        |. Parser.spaces
+        |. Parser.int
+        |. Parser.spaces
+        |. Parser.int
+        |. Parser.spaces
+        |= xRefTableParser
+        |. Parser.symbol "trailer"
+        |. Parser.spaces
+        |= dictParser
+        |. Parser.spaces
+        |. Parser.symbol "startxref"
+
+
+paddingIntParser : Parser Int
+paddingIntParser =
+    Parser.chompWhile Char.isDigit
+        |> Parser.getChompedString
+        |> Parser.andThen
+            (\string ->
+                case String.toInt string of
+                    Just ok ->
+                        Parser.succeed ok
+
+                    Nothing ->
+                        Parser.problem "Not a valid int"
+            )
+
+
+xRefTableParser : Parser (List Int)
+xRefTableParser =
+    Parser.succeed (\list -> list)
+        |. xRefEntryParser
+        |= Parser.loop
+            []
+            (\list ->
+                Parser.oneOf
+                    [ xRefEntryParser |> Parser.map (\a -> a :: list |> Parser.Loop)
+                    , List.reverse list |> Parser.Done |> Parser.succeed
+                    ]
+            )
+
+
+xRefEntryParser : Parser Int
+xRefEntryParser =
+    Parser.succeed identity
+        |= paddingIntParser
+        |. Parser.spaces
+        |. paddingIntParser
+        |. Parser.spaces
+        |. Parser.chompIf (\char -> char == 'n' || char == 'f')
+        |. Parser.spaces
+
+
+dictParser : Parser (List ( String, Object ))
+dictParser =
+    Parser.succeed identity
+        |. Parser.symbol "<<"
+        |. Parser.spaces
+        |= Parser.loop
+            []
+            (\list ->
+                Parser.oneOf
+                    [ Parser.symbol ">>" |> Parser.map (\() -> List.reverse list |> Parser.Done)
+                    , Parser.succeed (\key value -> ( key, value ) :: list |> Parser.Loop)
+                        |= nameParser
+                        |. Parser.spaces
+                        |= objectParser
+                        |. Parser.spaces
+                    ]
+            )
+        |. Parser.spaces
+
+
+topLevelObjectParser : Bytes -> String -> Parser ( IndirectReference_, List ( String, Object ) )
+topLevelObjectParser originalBytes originalText =
+    Parser.succeed (\index revision ( dict, maybeStream ) -> ( { index = index, revision = revision }, dict ))
+        |= Parser.int
+        |. Parser.spaces
+        |= Parser.int
+        |. Parser.spaces
+        |. Parser.symbol "obj"
+        |= (dictParser
+                |> Parser.andThen
+                    (\dict ->
+                        case
+                            List.filterMap
+                                (\( key, value ) ->
+                                    case ( key, value ) of
+                                        ( "Length", PdfInt length ) ->
+                                            Just length
+
+                                        _ ->
+                                            Nothing
+                                )
+                                dict
+                                |> List.head
+                        of
+                            Just length ->
+                                Parser.succeed
+                                    (\( row, column ) ->
+                                        let
+                                            offset =
+                                                String.split "\n" originalText
+                                                    |> List.take (row - 1)
+                                                    |> List.map String.length
+                                                    |> List.sum
+                                                    |> (+) column
+                                                    |> Debug.log "offset"
+
+                                            _ =
+                                                Debug.log "position" ( row, column )
+
+                                            result =
+                                                case sliceBytes offset length originalBytes of
+                                                    Just bytes ->
+                                                        let
+                                                            _ =
+                                                                Debug.log "bytesToString" (Hex.Convert.toString bytes)
+                                                        in
+                                                        case Flate.inflateZlib bytes of
+                                                            Just inflated ->
+                                                                BD.decode (BD.string 100) inflated
+                                                                    |> Maybe.withDefault "to string failed"
+
+                                                            Nothing ->
+                                                                "Inflate failed"
+
+                                                    Nothing ->
+                                                        "Failed to slice bytes"
+
+                                            _ =
+                                                Debug.log "stream" result
+                                        in
+                                        ( dict, Nothing )
+                                    )
+                                    |. Parser.symbol "stream\n"
+                                    |= Parser.getPosition
+
+                            Nothing ->
+                                Parser.succeed ( dict, Nothing )
+                                    |. Parser.symbol "endobj"
+                    )
+           )
+
+
+sliceBytes : Int -> Int -> Bytes -> Maybe Bytes
+sliceBytes offset size bytes =
+    BD.decode (BD.map2 (\_ a -> a) (BD.bytes offset) (BD.bytes size)) bytes
+
+
+basicObjectParser : Parser Object
+basicObjectParser =
+    Parser.oneOf
+        [ dictParser |> Parser.map PdfDict
+        , nameParser |> Parser.map Name
+        , angleBracketedHexStringParser
+        , arrayParser
+        ]
+
+
+objectParser : Parser Object
+objectParser =
+    Parser.oneOf
+        [ intFloatOrIndirectReferenceParser
+            |> Parser.andThen
+                (\list ->
+                    case list of
+                        [ single ] ->
+                            Parser.succeed single
+
+                        _ ->
+                            Parser.problem "Wrong number of objects"
+                )
+        , basicObjectParser
+        ]
+        |. Parser.spaces
+
+
+intFloatOrIndirectReferenceParser : Parser (List Object)
+intFloatOrIndirectReferenceParser =
+    Parser.oneOf
+        [ Parser.succeed (\int -> [ PdfInt -int ])
+            |. Parser.symbol "-"
+            |= Parser.int
+        , backtrackableIntParser
+            |. Parser.spaces
+            |> Parser.andThen
+                (\first ->
+                    let
+                        _ =
+                            Debug.log "first" first
+                    in
+                    Parser.oneOf
+                        [ backtrackableIntParser
+                            |. Parser.spaces
+                            |> Parser.andThen
+                                (\second ->
+                                    let
+                                        _ =
+                                            Debug.log "second" second
+                                    in
+                                    Parser.oneOf
+                                        [ Parser.succeed [ IndirectReference { index = first, revision = second } ]
+                                            |. Parser.symbol "R"
+                                        , Parser.succeed (\third -> [ PdfInt first, PdfInt second, PdfInt third ])
+                                            |= backtrackableIntParser
+                                        , Parser.succeed (\third -> [ PdfInt first, PdfInt second, PdfFloat third ])
+                                            |= Parser.float
+                                        ]
+                                )
+                        , Parser.succeed (\second -> [ PdfInt first, PdfFloat second ])
+                            |= Parser.float
+                        , Parser.chompWhile
+                            (\char -> char /= '/' && char /= '>' && char /= ']' && char /= ')' && char /= '}')
+                            |> Parser.getChompedString
+                            |> Parser.andThen
+                                (\text2 ->
+                                    if text2 == "" then
+                                        Parser.succeed [ PdfInt first ]
+
+                                    else
+                                        Parser.problem "Failed to decode int, float, or indirect reference"
+                                )
+                        ]
+                )
+        , Parser.float |> Parser.map (\a -> [ PdfFloat a ])
+        ]
+        |. Parser.spaces
+
+
+backtrackableIntParser =
+    Parser.backtrackable Parser.int
+
+
+objectInArrayParser : Parser (List Object)
+objectInArrayParser =
+    Parser.oneOf
+        [ intFloatOrIndirectReferenceParser
+        , basicObjectParser |> Parser.map List.singleton
+        ]
+        |. Parser.spaces
+
+
+angleBracketedHexStringParser : Parser Object
+angleBracketedHexStringParser =
+    Parser.succeed AngleBracketedHexString
+        |. Parser.symbol "<"
+        |= (Parser.chompWhile (\char -> char /= '>') |> Parser.getChompedString)
+        |. Parser.symbol ">"
+
+
+arrayParser : Parser Object
+arrayParser =
+    Parser.succeed PdfArray
+        |. Parser.symbol "["
+        |. Parser.spaces
+        |= Parser.loop
+            Array.empty
+            (\array ->
+                Parser.oneOf
+                    [ Parser.succeed (\items -> Array.append array (Array.fromList items) |> Parser.Loop)
+                        |= objectInArrayParser
+                    , Parser.symbol "]" |> Parser.map (\() -> Parser.Done array)
+                    ]
+            )
+
+
+nameParser : Parser String
+nameParser =
+    Parser.succeed identity
+        |. Parser.symbol "/"
+        |= (Parser.chompWhile
+                (\char ->
+                    (Char.toCode char >= 0x21)
+                        && (Char.toCode char <= 0x7E)
+                        && (char /= '%')
+                        && (char /= '(')
+                        && (char /= ')')
+                        && (char /= '<')
+                        && (char /= '>')
+                        && (char /= '[')
+                        && (char /= ']')
+                        && (char /= '{')
+                        && (char /= '}')
+                        && (char /= '/')
+                        && (char /= '#')
+                )
+                |> Parser.getChompedString
+           )
 
 
 type alias IndirectReference_ =
