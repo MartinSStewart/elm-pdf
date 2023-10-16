@@ -1186,7 +1186,6 @@ type Object
     | Text String
     | Stream (List ( String, Object )) StreamContent
     | IndirectReference IndirectReference_
-    | AngleBracketedHexString String
 
 
 encodeObject : Object -> BE.Encoder
@@ -1257,9 +1256,6 @@ encodeObject object =
 
         IndirectReference { index, revision } ->
             String.fromInt index ++ " " ++ String.fromInt revision ++ " R" |> BE.string
-
-        AngleBracketedHexString hexString ->
-            "<" ++ hexString ++ ">" |> BE.string
 
 
 textToString : String -> String
@@ -1365,6 +1361,91 @@ dictParser =
         |. Parser.spaces
 
 
+streamParser : Bytes -> String -> List ( String, Object ) -> Parser ( List ( String, Object ), Maybe String )
+streamParser originalBytes originalText dict =
+    case
+        ( List.filterMap
+            (\( key, value ) ->
+                case ( key, value ) of
+                    ( "Length", PdfInt length ) ->
+                        Just length
+
+                    _ ->
+                        Nothing
+            )
+            dict
+        , List.filterMap
+            (\( key, value ) ->
+                case ( key, value ) of
+                    ( "Filter", Name filterName ) ->
+                        Just filterName
+
+                    _ ->
+                        Nothing
+            )
+            dict
+            |> List.head
+        )
+    of
+        ( [ length ], maybeFilter ) ->
+            Parser.succeed
+                (\( row, column ) ->
+                    let
+                        offset =
+                            String.split "\n" originalText
+                                |> List.take (row - 1)
+                                |> List.map String.length
+                                |> List.sum
+                                |> (+) column
+                                |> Debug.log "offset"
+
+                        _ =
+                            Debug.log "position" ( row, column )
+
+                        result : String
+                        result =
+                            case sliceBytes offset length originalBytes of
+                                Just bytes ->
+                                    let
+                                        _ =
+                                            Debug.log "bytesToString" (Hex.Convert.toString bytes)
+                                    in
+                                    case maybeFilter of
+                                        Just "FlateDecode" ->
+                                            case Flate.inflateZlib bytes of
+                                                Just inflated ->
+                                                    BD.decode (BD.string (Bytes.width inflated)) inflated
+                                                        |> Maybe.withDefault "to string failed"
+
+                                                Nothing ->
+                                                    "Inflate failed"
+
+                                        Just filter ->
+                                            "Can't handle that filter type: " ++ filter
+
+                                        Nothing ->
+                                            BD.decode (BD.string (Bytes.width bytes)) bytes
+                                                |> Maybe.withDefault "to string failed"
+
+                                Nothing ->
+                                    "Failed to slice bytes"
+
+                        _ =
+                            Debug.log "stream" result
+                    in
+                    ( dict, Nothing )
+                )
+                |. Parser.symbol "stream\n"
+                |= Parser.getPosition
+
+        ( [], _ ) ->
+            Parser.succeed ( dict, Nothing )
+                |. Parser.symbol "endobj"
+
+        _ ->
+            Parser.problem "Found multiple length values"
+
+
 topLevelObjectParser : Bytes -> String -> Parser ( IndirectReference_, List ( String, Object ) )
 topLevelObjectParser originalBytes originalText =
     Parser.succeed (\index revision ( dict, maybeStream ) -> ( { index = index, revision = revision }, dict ))
@@ -1373,68 +1454,7 @@ topLevelObjectParser originalBytes originalText =
         |= Parser.int
         |. Parser.spaces
         |. Parser.symbol "obj"
-        |= (dictParser
-                |> Parser.andThen
-                    (\dict ->
-                        case
-                            List.filterMap
-                                (\( key, value ) ->
-                                    case ( key, value ) of
-                                        ( "Length", PdfInt length ) ->
-                                            Just length
-
-                                        _ ->
-                                            Nothing
-                                )
-                                dict
-                                |> List.head
-                        of
-                            Just length ->
-                                Parser.succeed
-                                    (\( row, column ) ->
-                                        let
-                                            offset =
-                                                String.split "\n" originalText
-                                                    |> List.take (row - 1)
-                                                    |> List.map String.length
-                                                    |> List.sum
-                                                    |> (+) column
-                                                    |> Debug.log "offset"
-
-                                            _ =
-                                                Debug.log "position" ( row, column )
-
-                                            result =
-                                                case sliceBytes offset length originalBytes of
-                                                    Just bytes ->
-                                                        let
-                                                            _ =
-                                                                Debug.log "bytesToString" (Hex.Convert.toString bytes)
-                                                        in
-                                                        case Flate.inflateZlib bytes of
-                                                            Just inflated ->
-                                                                BD.decode (BD.string 100) inflated
-                                                                    |> Maybe.withDefault "to string failed"
-
-                                                            Nothing ->
-                                                                "Inflate failed"
-
-                                                    Nothing ->
-                                                        "Failed to slice bytes"
-
-                                            _ =
-                                                Debug.log "stream" result
-                                        in
-                                        ( dict, Nothing )
-                                    )
-                                    |. Parser.symbol "stream\n"
-                                    |= Parser.getPosition
-
-                            Nothing ->
-                                Parser.succeed ( dict, Nothing )
-                                    |. Parser.symbol "endobj"
-                    )
-           )
+        |= (dictParser |> Parser.andThen (streamParser originalBytes originalText))
 
 
 sliceBytes : Int -> Int -> Bytes -> Maybe Bytes
@@ -1447,7 +1467,7 @@ basicObjectParser =
     Parser.oneOf
         [ dictParser |> Parser.map PdfDict
         , nameParser |> Parser.map Name
-        , angleBracketedHexStringParser
+        , textParser
         , arrayParser
         ]
 
@@ -1480,19 +1500,11 @@ intFloatOrIndirectReferenceParser =
             |. Parser.spaces
             |> Parser.andThen
                 (\first ->
-                    let
-                        _ =
-                            Debug.log "first" first
-                    in
                     Parser.oneOf
                         [ backtrackableIntParser
                             |. Parser.spaces
                             |> Parser.andThen
                                 (\second ->
-                                    let
-                                        _ =
-                                            Debug.log "second" second
-                                    in
                                     Parser.oneOf
                                         [ Parser.succeed [ IndirectReference { index = first, revision = second } ]
                                             |. Parser.symbol "R"
@@ -1522,6 +1534,7 @@ intFloatOrIndirectReferenceParser =
         |. Parser.spaces
 
 
+backtrackableIntParser : Parser Int
 backtrackableIntParser =
     Parser.backtrackable Parser.int
 
@@ -1535,12 +1548,18 @@ objectInArrayParser =
         |. Parser.spaces
 
 
-angleBracketedHexStringParser : Parser Object
-angleBracketedHexStringParser =
-    Parser.succeed AngleBracketedHexString
-        |. Parser.symbol "<"
-        |= (Parser.chompWhile (\char -> char /= '>') |> Parser.getChompedString)
-        |. Parser.symbol ">"
+textParser : Parser Object
+textParser =
+    Parser.oneOf
+        [ Parser.succeed Text
+            |. Parser.symbol "<"
+            |= (Parser.chompWhile (\char -> char /= '>') |> Parser.getChompedString)
+            |. Parser.symbol ">"
+        , Parser.succeed Text
+            |. Parser.symbol "("
+            |= (Parser.chompWhile (\char -> char /= ')') |> Parser.getChompedString)
+            |. Parser.symbol ")"
+        ]
 
 
 arrayParser : Parser Object
