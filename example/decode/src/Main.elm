@@ -1,67 +1,65 @@
 module Main exposing (main)
 
 import Browser
+import File exposing (File)
+import File.Select
 import Html exposing (Html)
-import Http exposing (Error(..), Response(..))
+import Html.Attributes
+import Html.Events
 import Pdf exposing (ASizes(..), DecodedPdf, Orientation(..), PageCoordinates, Pdf)
 import Task
 
 
 type Msg
-    = LoadedPdf (Result String DecodedPdf)
+    = PressedSelectPdf
+    | SelectedPdf File
+    | LoadedPdf (Result String DecodedPdf)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        PressedSelectPdf ->
+            ( model, File.Select.file [ "application/pdf" ] SelectedPdf )
+
+        SelectedPdf file ->
+            ( model, File.toBytes file |> Task.perform (\bytes -> Pdf.fromBytes bytes |> LoadedPdf) )
+
         LoadedPdf result ->
-            let
-                _ =
-                    Debug.log "" result
-            in
-            ( model, Cmd.none )
+            ( { model | output = result }, Cmd.none )
 
 
 view : Model -> Html Msg
-view model =
-    Html.text ""
+view { output } =
+    Html.div
+        [ Html.Attributes.style "padding" "32px" ]
+        [ Html.button [ Html.Events.onClick PressedSelectPdf ] [ Html.text "Select a PDF file to parse" ]
+        , Html.div
+            []
+            [ case output of
+                Ok ok ->
+                    Html.div
+                        []
+                        [ Html.div [] [ Html.text (Debug.toString ok.metadata) ]
+                        , Html.br [] []
+                        , List.map (\result -> Html.div [] [ Debug.toString result |> Html.text ]) ok.sections
+                            |> List.intersperse (Html.br [] [])
+                            |> Html.div []
+                        ]
+
+                Err error ->
+                    Html.text error
+            ]
+        ]
 
 
 type alias Model =
-    {}
+    { output : Result String DecodedPdf }
 
 
 init : () -> ( Model, Cmd Msg )
 init () =
-    ( {}
-    , Http.task
-        { method = "GET"
-        , headers = []
-        , body = Http.emptyBody
-        , url = "https://raw.githubusercontent.com/MartinSStewart/elm-pdf/6f46a688f3301224e5c72635143d2338958924e8/example/decode/Sample%20Energy%20Report.pdf"
-        , resolver =
-            Http.bytesResolver
-                (\response ->
-                    case response of
-                        BadUrl_ _ ->
-                            Err "Bad url"
-
-                        Timeout_ ->
-                            Err "Timed out"
-
-                        NetworkError_ ->
-                            Err "Network error"
-
-                        BadStatus_ metadata body ->
-                            Err "Bad status"
-
-                        GoodStatus_ metadata body ->
-                            Pdf.fromBytes body
-                )
-        , timeout = Nothing
-        }
-        |> Task.attempt LoadedPdf
-    )
+    ( { output = Err "" }, Cmd.none )
 
 
 main : Platform.Program () Model Msg

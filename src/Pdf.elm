@@ -55,7 +55,7 @@ import Flate
 import Hex.Convert
 import Length exposing (Length, Meters)
 import List.Nonempty exposing (Nonempty(..))
-import Parser exposing ((|.), (|=), Parser)
+import Parser exposing ((|.), (|=), DeadEnd, Parser)
 import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
 import Quantity exposing (Quantity)
@@ -488,7 +488,7 @@ decodeHeader =
 
 
 type alias DecodedPdf =
-    { metadata : List ( String, Object ), sections : List ( IndirectReference_, Object ) }
+    { metadata : List ( String, Object ), sections : List (Result (List DeadEnd) ( IndirectReference_, Object )) }
 
 
 type alias PdfVersion =
@@ -502,20 +502,20 @@ getXRefOffset bytes =
             (\_ eofText ->
                 case String.indexes "startxref\n" eofText of
                     [ index ] ->
-                        case String.dropLeft index eofText |> String.split "\n" of
+                        case String.dropLeft index eofText |> String.trim |> String.split "\n" |> Debug.log "a" of
                             [ _, offsetText, "%%EOF" ] ->
                                 case String.toInt offsetText of
                                     Just int ->
                                         Ok int
 
                                     Nothing ->
-                                        Err ("Unexpected EOF text " ++ eofText)
+                                        Err ("Unexpected EOF text 3: " ++ eofText)
 
                             _ ->
-                                Err ("Unexpected EOF text " ++ eofText)
+                                Err ("Unexpected EOF text 2: " ++ eofText)
 
                     _ ->
-                        Err ("Unexpected EOF text " ++ eofText)
+                        Err ("Unexpected EOF text 1: " ++ eofText)
             )
             (BD.bytes (Bytes.width bytes - 30))
             (BD.string 30)
@@ -539,19 +539,12 @@ fromBytes : Bytes -> Result String DecodedPdf
 fromBytes bytes =
     case getXRefOffset bytes of
         Ok xRefOffset ->
-            let
-                xrefDecoder =
-                    BD.map2
-                        (\_ endSection -> Parser.run xRefParser endSection |> Debug.log "xref")
-                        (BD.bytes xRefOffset)
-                        (BD.string (Bytes.width bytes - xRefOffset))
-            in
-            case BD.decode xrefDecoder bytes of
-                Just result ->
-                    case result of
+            case sliceBytes xRefOffset (Bytes.width bytes - xRefOffset) bytes of
+                Just bytes2 ->
+                    case decodeAscii bytes2 |> Parser.run xRefParser of
                         Ok xRef ->
                             let
-                                sections : List ( IndirectReference_, Object )
+                                sections : List (Result (List DeadEnd) ( IndirectReference_, Object ))
                                 sections =
                                     List.foldr
                                         (\offset state ->
@@ -563,28 +556,18 @@ fromBytes bytes =
                                                     case sliceBytes offset size bytes of
                                                         Just endSection ->
                                                             let
-                                                                _ =
-                                                                    Debug.log "abc" endSectionText
-
                                                                 endSectionText =
-                                                                    BD.decode (BD.string size) endSection |> Maybe.withDefault ""
+                                                                    decodeAscii endSection
                                                             in
                                                             Parser.run
                                                                 (topLevelObjectParser endSection endSectionText)
                                                                 endSectionText
-                                                                |> Debug.log "section"
 
                                                         Nothing ->
                                                             Err []
                                             in
                                             { next = offset
-                                            , sections =
-                                                case result2 of
-                                                    Ok ok ->
-                                                        ok :: state.sections
-
-                                                    Err error ->
-                                                        state.sections
+                                            , sections = result2 :: state.sections
                                             }
                                         )
                                         { next = xRefOffset, sections = [] }
@@ -1713,8 +1696,7 @@ xRefParser =
 
 paddingIntParser : Parser Int
 paddingIntParser =
-    Parser.chompWhile Char.isDigit
-        |> Parser.getChompedString
+    chompOneOrMore Char.isDigit
         |> Parser.andThen
             (\string ->
                 case String.toInt string of
@@ -1761,7 +1743,7 @@ dictParser =
             (\list ->
                 Parser.oneOf
                     [ Parser.symbol ">>" |> Parser.map (\() -> List.reverse list |> Parser.Done)
-                    , Parser.succeed (\key value -> Debug.log "key" ( key, value ) :: list |> Parser.Loop)
+                    , Parser.succeed (\key value -> ( key, value ) :: list |> Parser.Loop)
                         |= nameParser
                         |. Parser.spaces
                         |= objectParser
@@ -1822,24 +1804,15 @@ streamParser originalBytes originalText dict =
                                     Just "FlateDecode" ->
                                         case Flate.inflateZlib bytes of
                                             Just inflated ->
-                                                case BD.decode (BD.string (Bytes.width inflated)) inflated of
-                                                    Just streamText ->
+                                                case Parser.run graphicsParser2 (decodeAscii inflated) of
+                                                    Ok ok ->
+                                                        Parser.succeed (Just ok)
+
+                                                    Err error ->
                                                         let
                                                             _ =
-                                                                Debug.log "streamText" streamText
+                                                                Debug.log "stream error" error
                                                         in
-                                                        case Parser.run graphicsParser2 streamText of
-                                                            Ok ok ->
-                                                                Parser.succeed (Just ok)
-
-                                                            Err error ->
-                                                                let
-                                                                    _ =
-                                                                        Debug.log "stream error" error
-                                                                in
-                                                                Parser.problem "Stream parsing failed"
-
-                                                    Nothing ->
                                                         Parser.problem "Stream parsing failed"
 
                                             Nothing ->
@@ -1849,16 +1822,11 @@ streamParser originalBytes originalText dict =
                                         Parser.problem ("Can't handle that filter type: " ++ filter)
 
                                     Nothing ->
-                                        case BD.decode (BD.string (Bytes.width bytes)) bytes of
-                                            Just streamText ->
-                                                case Parser.run graphicsParser2 streamText of
-                                                    Ok ok ->
-                                                        Parser.succeed (Just ok)
+                                        case Parser.run graphicsParser2 (decodeAscii bytes) of
+                                            Ok ok ->
+                                                Parser.succeed (Just ok)
 
-                                                    Err _ ->
-                                                        Parser.problem "Stream parsing failed"
-
-                                            Nothing ->
+                                            Err _ ->
                                                 Parser.problem "Stream parsing failed"
 
                             Nothing ->
@@ -1871,6 +1839,23 @@ streamParser originalBytes originalText dict =
 
         _ ->
             Parser.problem "Found multiple length values"
+
+
+decodeAscii : Bytes -> String
+decodeAscii bytes =
+    BD.decode
+        (BD.loop
+            ( Bytes.width bytes, [] )
+            (\( remaining, list ) ->
+                if remaining <= 0 then
+                    List.reverse list |> String.fromList |> BD.Done |> BD.succeed
+
+                else
+                    BD.unsignedInt8 |> BD.map (\byte -> BD.Loop ( remaining - 1, Char.fromCode byte :: list ))
+            )
+        )
+        bytes
+        |> Maybe.withDefault ""
 
 
 type alias GraphicsInstruction =
@@ -1900,8 +1885,7 @@ graphicsParser =
                 [ Parser.succeed (\items -> Array.append array (Array.fromList items) |> Parser.Loop)
                     |= objectInArrayParser
                     |. Parser.spaces
-                , Parser.chompWhile (\char -> Char.isAlpha char || char == '*' || char == '"' || char == '\'')
-                    |> Parser.getChompedString
+                , chompOneOrMore (\char -> Char.isAlpha char || char == '*' || char == '"' || char == '\'')
                     |> Parser.andThen
                         (\text2 ->
                             case Dict.get text2 operators of
@@ -1933,6 +1917,7 @@ topLevelObjectParser originalBytes originalText =
         |= Parser.int
         |. Parser.spaces
         |. Parser.symbol "obj"
+        |. Parser.spaces
         |= (dictParser
                 |> Parser.andThen
                     (\dict -> streamParser originalBytes originalText dict |> Parser.map (Tuple.pair dict))
@@ -2000,6 +1985,7 @@ intFloatOrIndirectReferenceParser =
                                                         |= backtrackableIntParser
                                                     , Parser.succeed (\third -> [ PdfInt firstInt, PdfInt secondInt, PdfFloat third ])
                                                         |= Parser.float
+                                                    , Parser.succeed [ PdfInt firstInt, PdfInt secondInt ]
                                                     ]
                                 )
                                 floatOrIntParser
@@ -2105,30 +2091,28 @@ textParserHelper delimiter =
                             [ Parser.symbol "\\" |> Parser.map (\() -> "\\")
                             , Parser.symbol ")" |> Parser.map (\() -> ")")
                             , Parser.symbol "(" |> Parser.map (\() -> "(")
-                            , Parser.symbol ">" |> Parser.map (\() -> ">")
-                            , Parser.symbol "<" |> Parser.map (\() -> "<")
+                            , Parser.symbol "n" |> Parser.map (\() -> "\n")
+                            , Parser.symbol "r" |> Parser.map (\() -> "\u{000D}")
+                            , Parser.symbol "t" |> Parser.map (\() -> "\t")
+                            , Parser.symbol "b" |> Parser.map (\() -> "")
+                            , Parser.symbol "f" |> Parser.map (\() -> "")
                             , Parser.succeed
-                                (\one two three ->
-                                    case [ one, two, three ] |> String.concat |> String.toInt |> Maybe.map Char.fromCode of
-                                        Just char ->
-                                            String.fromChar char
-
-                                        Nothing ->
-                                            let
-                                                _ =
-                                                    Debug.log "invalid char" ""
-                                            in
-                                            " "
-                                )
-                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
-                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
-                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
+                                (\one two three -> Char.fromCode (8 * 8 * one + 8 * two + three) |> String.fromChar)
+                                |= chompDigit
+                                |= chompDigit
+                                |= chompDigit
                             ]
-                    , Parser.chompWhile (\char -> char /= '\\' && char /= delimiter) |> Parser.getChompedString
+                    , chompOneOrMore (\char -> char /= '\\' && char /= delimiter)
                     ]
-                    |> Parser.map (\text2 -> state ++ Debug.log "chomp" text2 |> Parser.Loop)
+                    |> Parser.map (\text2 -> state ++ text2 |> Parser.Loop)
                 ]
         )
+
+
+chompDigit : Parser Int
+chompDigit =
+    Parser.getChompedString (Parser.chompIf Char.isDigit)
+        |> Parser.map (\char -> String.toInt char |> Maybe.withDefault 0)
 
 
 arrayParser : Parser Object
@@ -2152,24 +2136,22 @@ nameParser : Parser String
 nameParser =
     Parser.succeed identity
         |. Parser.symbol "/"
-        |= (Parser.chompWhile
-                (\char ->
-                    (Char.toCode char >= 0x21)
-                        && (Char.toCode char <= 0x7E)
-                        && (char /= '%')
-                        && (char /= '(')
-                        && (char /= ')')
-                        && (char /= '<')
-                        && (char /= '>')
-                        && (char /= '[')
-                        && (char /= ']')
-                        && (char /= '{')
-                        && (char /= '}')
-                        && (char /= '/')
-                        && (char /= '#')
-                )
-                |> Parser.getChompedString
-           )
+        |= chompOneOrMore
+            (\char ->
+                (Char.toCode char >= 0x21)
+                    && (Char.toCode char <= 0x7E)
+                    && (char /= '%')
+                    && (char /= '(')
+                    && (char /= ')')
+                    && (char /= '<')
+                    && (char /= '>')
+                    && (char /= '[')
+                    && (char /= ']')
+                    && (char /= '{')
+                    && (char /= '}')
+                    && (char /= '/')
+                    && (char /= '#')
+            )
 
 
 type alias IndirectReference_ =
