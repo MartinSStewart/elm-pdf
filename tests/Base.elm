@@ -8,7 +8,7 @@ import Expect
 import Flate
 import Hex.Convert
 import Parser
-import Pdf exposing (Object(..))
+import Pdf exposing (Object(..), Operator(..), StreamContent(..))
 import Pixels
 import Test exposing (Test, describe, test)
 
@@ -45,24 +45,25 @@ tests =
                     |> Expect.equal
                         (Ok
                             ( { index = 33, revision = 0 }
-                            , [ ( "Type", Name "Page" )
-                              , ( "Parent", IndirectReference { index = 2, revision = 0 } )
-                              , ( "MediaBox"
-                                , PdfArray (Array.fromList [ PdfInt 0, PdfInt 0, PdfFloat 595.2756, PdfFloat 841.8898 ])
-                                )
-                              , ( "Contents", IndirectReference { index = 34, revision = 0 } )
-                              , ( "Resources"
-                                , PdfDict
-                                    [ ( "Font"
-                                      , PdfDict
-                                            [ ( "F1"
-                                              , IndirectReference { index = 4, revision = 0 }
-                                              )
-                                            ]
-                                      )
-                                    ]
-                                )
-                              ]
+                            , PdfDict
+                                [ ( "Type", Name "Page" )
+                                , ( "Parent", IndirectReference { index = 2, revision = 0 } )
+                                , ( "MediaBox"
+                                  , PdfArray (Array.fromList [ PdfInt 0, PdfInt 0, PdfFloat 595.2756, PdfFloat 841.8898 ])
+                                  )
+                                , ( "Contents", IndirectReference { index = 34, revision = 0 } )
+                                , ( "Resources"
+                                  , PdfDict
+                                        [ ( "Font"
+                                          , PdfDict
+                                                [ ( "F1"
+                                                  , IndirectReference { index = 4, revision = 0 }
+                                                  )
+                                                ]
+                                          )
+                                        ]
+                                  )
+                                ]
                             )
                         )
         , test "Decode2" <|
@@ -75,13 +76,48 @@ tests =
                     |> Expect.equal
                         (Ok
                             ( { index = 34, revision = 0 }
-                            , [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 236 ) ]
+                            , Stream
+                                [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 236 ) ]
+                                (DrawingInstructions
+                                    [ { operator = BT, parameters = [] }
+                                    , { operator = Tr, parameters = [ PdfInt 0 ] }
+                                    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+                                    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+                                    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 815.6863 ] }
+                                    , { operator = Tj, parameters = [ Text "Energy for lighting                                                                         348.2015                3.0700             1068.9786 (268)" ] }
+                                    , { operator = ET, parameters = [] }
+                                    , { operator = BT, parameters = [] }
+                                    , { operator = Tr, parameters = [ PdfInt 0 ] }
+                                    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+                                    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+                                    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 809.2793 ] }
+                                    , { operator = Tj, parameters = [ Text "Energy saving/generation technologies" ] }
+                                    , { operator = ET, parameters = [] }
+                                    , { operator = BT, parameters = [] }
+                                    , { operator = Tr, parameters = [ PdfInt 0 ] }
+                                    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+                                    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+                                    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 802.8723 ] }
+                                    , { operator = Tj, parameters = [ Text "PV Unit                                                                                                                               -5643.0184 (269)" ] }
+                                    , { operator = ET, parameters = [] }
+                                    , { operator = BT, parameters = [] }
+                                    , { operator = Tr, parameters = [ PdfInt 0 ] }
+                                    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+                                    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+                                    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 796.4653 ] }
+                                    , { operator = Tj, parameters = [ Text "Primary energy kWh/year                                                                                                                8654.9537 (272)" ] }
+                                    , { operator = ET, parameters = [] }
+                                    , { operator = BT, parameters = [] }
+                                    , { operator = Tr, parameters = [ PdfInt 0 ] }
+                                    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+                                    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+                                    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 790.0583 ] }
+                                    , { operator = Tj, parameters = [ Text "Primary energy kWh/m2/year                                                                                                              124.6034 (273)" ] }
+                                    , { operator = ET, parameters = [] }
+                                    ]
+                                )
                             )
                         )
-        , test "Inflate" <|
-            \() ->
-                Flate.inflateZlib zlibBytes
-                    |> Expect.equal Nothing
         ]
 
 

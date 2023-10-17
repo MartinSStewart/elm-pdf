@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, Object(..), fromBytes, topLevelObjectParser
+    , DecodedPdf, Object(..), Operator(..), StreamContent(..), fromBytes, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -488,7 +488,7 @@ decodeHeader =
 
 
 type alias DecodedPdf =
-    { xRef : XRefTable, sections : List ( IndirectReference_, List ( String, Object ) ) }
+    { metadata : List ( String, Object ), sections : List ( IndirectReference_, Object ) }
 
 
 type alias PdfVersion =
@@ -551,6 +551,7 @@ fromBytes bytes =
                     case result of
                         Ok xRef ->
                             let
+                                sections : List ( IndirectReference_, Object )
                                 sections =
                                     List.foldr
                                         (\offset state ->
@@ -590,7 +591,7 @@ fromBytes bytes =
                                         xRef.references
                                         |> .sections
                             in
-                            Ok { xRef = xRef, sections = sections }
+                            Ok { metadata = xRef.metadata, sections = sections }
 
                         Err _ ->
                             Err "Failed to decode xref"
@@ -1006,7 +1007,7 @@ boundingBoxScaleY scaleBy yPosition bounds =
 
 
 type alias IntermediateInstructions =
-    { instructions : String
+    { instructions : Array GraphicsInstruction
     , cursorPosition : Point2d Meters PageCoordinates
     , fontSize : Length
     , pageSize : Vector2d Meters PageCoordinates
@@ -1016,7 +1017,7 @@ type alias IntermediateInstructions =
 
 initIntermediateInstructions : Vector2d Meters PageCoordinates -> IntermediateInstructions
 initIntermediateInstructions pageSize =
-    { instructions = ""
+    { instructions = Array.empty
     , cursorPosition = pageCoordToPdfCoord pageSize Point2d.origin
     , pageSize = pageSize
     , fontSize = Length.points -1
@@ -1024,9 +1025,11 @@ initIntermediateInstructions pageSize =
     }
 
 
-endIntermediateInstructions : IntermediateInstructions -> String
+endIntermediateInstructions : IntermediateInstructions -> List GraphicsInstruction
 endIntermediateInstructions intermediateInstructions =
-    "BT " ++ intermediateInstructions.instructions ++ "ET"
+    { operator = BT, parameters = [] }
+        :: Array.toList intermediateInstructions.instructions
+        ++ [ { operator = ET, parameters = [] } ]
 
 
 drawImage : BoundingBox2d Meters PageCoordinates -> Int -> IntermediateInstructions -> IntermediateInstructions
@@ -1040,16 +1043,32 @@ drawImage bounds imageIndex intermediate =
 
         ( x, y ) =
             Point2d.xy minX maxY |> pageCoordToPdfCoord intermediate.pageSize |> Point2d.toTuple Length.inPoints
-
-        position =
-            [ Length.inPoints width, 0, 0, Length.inPoints height, x, y ]
-                |> List.map floatToString
-                |> String.join " "
-                |> (\a -> "q " ++ a ++ " cm ")
     in
     { intermediate
         | instructions =
-            intermediate.instructions ++ position ++ "/Im" ++ String.fromInt imageIndex ++ " Do Q "
+            Array.append
+                intermediate.instructions
+                (Array.fromList
+                    [ { operator = QLowercase, parameters = [] }
+                    , { operator = CmLowercase
+                      , parameters =
+                            [ Length.inPoints width |> PdfFloat
+                            , PdfFloat 0
+                            , PdfFloat 0
+                            , Length.inPoints height |> PdfFloat
+                            , PdfFloat x
+                            , PdfFloat y
+                            ]
+                      }
+                    , { operator = Do
+                      , parameters =
+                            [ Name "Im"
+                            , PdfInt imageIndex
+                            ]
+                      }
+                    , { operator = Q, parameters = [] }
+                    ]
+                )
     }
 
 
@@ -1099,19 +1118,16 @@ drawText fontSize fontIndex text_ position intermediate =
 
 drawTextLine : String -> IntermediateInstructions -> IntermediateInstructions
 drawTextLine line intermediate =
-    { intermediate | instructions = intermediate.instructions ++ textToString line ++ " Tj " }
+    { intermediate | instructions = Array.push { operator = Tj, parameters = [ Text line ] } intermediate.instructions }
 
 
 setFont : Int -> Length -> IntermediateInstructions -> IntermediateInstructions
 setFont fontIndex fontSize intermediate =
     { intermediate
         | instructions =
-            intermediate.instructions
-                ++ "/F"
-                ++ String.fromInt fontIndex
-                ++ " "
-                ++ lengthToString fontSize
-                ++ " Tf "
+            Array.push
+                { operator = Tf, parameters = [ Name "F", PdfInt fontIndex, Length.inPoints fontSize |> PdfFloat ] }
+                intermediate.instructions
     }
 
 
@@ -1122,7 +1138,10 @@ moveCursor offset intermediate =
             Vector2d.toTuple Length.inPoints offset
     in
     { intermediate
-        | instructions = intermediate.instructions ++ floatToString x ++ " " ++ floatToString -y ++ " Td "
+        | instructions =
+            Array.push
+                { operator = Td, parameters = [ PdfFloat x, PdfFloat -y ] }
+                intermediate.instructions
         , cursorPosition = Point2d.translateBy offset intermediate.cursorPosition
     }
 
@@ -1226,8 +1245,7 @@ encodeObject object =
                                     False
 
                                 textBytes =
-                                    text_
-                                        |> BE.string
+                                    encodeGraphicsInstructions text_
                                         |> BE.encode
                                         |> (if deflate then
                                                 Flate.deflateZlib
@@ -1258,6 +1276,20 @@ encodeObject object =
             String.fromInt index ++ " " ++ String.fromInt revision ++ " R" |> BE.string
 
 
+encodeGraphicsInstructions : List GraphicsInstruction -> BE.Encoder
+encodeGraphicsInstructions instructions =
+    List.concatMap
+        (\instruction ->
+            List.intersperse (BE.string " ") (List.map encodeObject instruction.parameters)
+                ++ [ BE.string " "
+                   , operatorToString instruction.operator |> BE.string
+                   , BE.string " "
+                   ]
+        )
+        instructions
+        |> BE.sequence
+
+
 textToString : String -> String
 textToString text_ =
     text_
@@ -1282,6 +1314,384 @@ encodePdfDict =
         >> List.intersperse (BE.string " ")
         >> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
         >> BE.sequence
+
+
+type Operator
+    = WLowercase
+    | J
+    | JLowercase
+    | M
+    | DLowercase
+    | RiLowercase
+    | ILowercase
+    | GsLowercase
+    | QLowercase
+    | Q
+    | CmLowercase
+    | MLowercase
+    | LLowercase
+    | CLowercase
+    | VLowercase
+    | YLowercase
+    | HLowercase
+    | ReLowercase
+    | S
+    | SLowercase
+    | FLowercase
+    | F
+    | FStarLowercase
+    | B
+    | BStar
+    | BLowercase
+    | BStarLowercase
+    | NLowercase
+    | W
+    | WStar
+    | BT
+    | ET
+    | Tc
+    | Tw
+    | Tz
+    | TL
+    | Tf
+    | Tr
+    | Ts
+    | Td
+    | TD
+    | Tm
+    | T
+    | Tj
+    | TJ
+    | SingleQuote
+    | DoubleQuote
+    | D0Lowercase
+    | D1Lowercase
+    | CS
+    | CsLowercase
+    | SC
+    | SCN
+    | ScLowercase
+    | ScnLowercase
+    | G
+    | GLowercase
+    | RG
+    | RgLowercase
+    | K
+    | KLowercase
+    | ShLowercase
+    | BI
+    | ID
+    | EI
+    | Do
+    | MP
+    | DP
+    | BMC
+    | BDC
+    | EMC
+    | BX
+    | EX
+
+
+operatorToString : Operator -> String
+operatorToString operator =
+    case operator of
+        WLowercase ->
+            "w"
+
+        J ->
+            "J"
+
+        JLowercase ->
+            "j"
+
+        M ->
+            "M"
+
+        DLowercase ->
+            "d"
+
+        RiLowercase ->
+            "ri"
+
+        ILowercase ->
+            "i"
+
+        GsLowercase ->
+            "gs"
+
+        QLowercase ->
+            "q"
+
+        Q ->
+            "Q"
+
+        CmLowercase ->
+            "cm"
+
+        MLowercase ->
+            "m"
+
+        LLowercase ->
+            "l"
+
+        CLowercase ->
+            "c"
+
+        VLowercase ->
+            "v"
+
+        YLowercase ->
+            "y"
+
+        HLowercase ->
+            "h"
+
+        ReLowercase ->
+            "re"
+
+        S ->
+            "S"
+
+        SLowercase ->
+            "s"
+
+        FLowercase ->
+            "f"
+
+        F ->
+            "F"
+
+        FStarLowercase ->
+            "f*"
+
+        B ->
+            "B"
+
+        BStar ->
+            "B*"
+
+        BLowercase ->
+            "b"
+
+        BStarLowercase ->
+            "b*"
+
+        NLowercase ->
+            "n"
+
+        W ->
+            "W"
+
+        WStar ->
+            "W*"
+
+        BT ->
+            "BT"
+
+        ET ->
+            "ET"
+
+        Tc ->
+            "Tc"
+
+        Tw ->
+            "Tw"
+
+        Tz ->
+            "Tz"
+
+        TL ->
+            "TL"
+
+        Tf ->
+            "Tf"
+
+        Tr ->
+            "Tr"
+
+        Ts ->
+            "Ts"
+
+        Td ->
+            "Td"
+
+        TD ->
+            "TD"
+
+        Tm ->
+            "Tm"
+
+        T ->
+            "T*"
+
+        Tj ->
+            "Tj"
+
+        TJ ->
+            "TJ"
+
+        SingleQuote ->
+            "'"
+
+        DoubleQuote ->
+            "\""
+
+        D0Lowercase ->
+            "d0"
+
+        D1Lowercase ->
+            "d1"
+
+        CS ->
+            "CS"
+
+        CsLowercase ->
+            "cs"
+
+        SC ->
+            "SC"
+
+        SCN ->
+            "SCN"
+
+        ScLowercase ->
+            "sc"
+
+        ScnLowercase ->
+            "scn"
+
+        G ->
+            "G"
+
+        GLowercase ->
+            "g"
+
+        RG ->
+            "RG"
+
+        RgLowercase ->
+            "rg"
+
+        K ->
+            "K"
+
+        KLowercase ->
+            "k"
+
+        ShLowercase ->
+            "sh"
+
+        BI ->
+            "BI"
+
+        ID ->
+            "ID"
+
+        EI ->
+            "EI"
+
+        Do ->
+            "Do"
+
+        MP ->
+            "MP"
+
+        DP ->
+            "DP"
+
+        BMC ->
+            "BMC"
+
+        BDC ->
+            "BDC"
+
+        EMC ->
+            "EMC"
+
+        BX ->
+            "BX"
+
+        EX ->
+            "EX"
+
+
+operators : Dict String Operator
+operators =
+    [ ( "w", WLowercase )
+    , ( "J", J )
+    , ( "j", JLowercase )
+    , ( "M", M )
+    , ( "d", DLowercase )
+    , ( "ri", RiLowercase )
+    , ( "i", ILowercase )
+    , ( "gs", GsLowercase )
+    , ( "q", QLowercase )
+    , ( "Q", Q )
+    , ( "cm", CmLowercase )
+    , ( "m", MLowercase )
+    , ( "l", LLowercase )
+    , ( "c", CLowercase )
+    , ( "v", VLowercase )
+    , ( "y", YLowercase )
+    , ( "h", HLowercase )
+    , ( "re", ReLowercase )
+    , ( "S", S )
+    , ( "s", SLowercase )
+    , ( "f", FLowercase )
+    , ( "F", F )
+    , ( "f*", FStarLowercase )
+    , ( "B", B )
+    , ( "B*", BStar )
+    , ( "b", BLowercase )
+    , ( "b*", BStarLowercase )
+    , ( "n", NLowercase )
+    , ( "W", W )
+    , ( "W*", WStar )
+    , ( "BT", BT )
+    , ( "ET", ET )
+    , ( "Tc", Tc )
+    , ( "Tw", Tw )
+    , ( "Tz", Tz )
+    , ( "TL", TL )
+    , ( "Tf", Tf )
+    , ( "Tr", Tr )
+    , ( "Ts", Ts )
+    , ( "Td", Td )
+    , ( "TD", TD )
+    , ( "Tm", Tm )
+    , ( "T*", T )
+    , ( "Tj", Tj )
+    , ( "TJ", TJ )
+    , ( "'", SingleQuote )
+    , ( "\"", DoubleQuote )
+    , ( "d0", D0Lowercase )
+    , ( "d1", D1Lowercase )
+    , ( "CS", CS )
+    , ( "cs", CsLowercase )
+    , ( "SC", SC )
+    , ( "SCN", SCN )
+    , ( "sc", ScLowercase )
+    , ( "scn", ScnLowercase )
+    , ( "G", G )
+    , ( "g", GLowercase )
+    , ( "RG", RG )
+    , ( "rg", RgLowercase )
+    , ( "K", K )
+    , ( "k", KLowercase )
+    , ( "sh", ShLowercase )
+    , ( "BI", BI )
+    , ( "ID", ID )
+    , ( "EI", EI )
+    , ( "Do", Do )
+    , ( "MP", MP )
+    , ( "DP", DP )
+    , ( "BMC", BMC )
+    , ( "BDC", BDC )
+    , ( "EMC", EMC )
+    , ( "BX", BX )
+    , ( "EX", EX )
+    ]
+        |> Dict.fromList
 
 
 xRefParser : Parser XRefTable
@@ -1351,7 +1761,7 @@ dictParser =
             (\list ->
                 Parser.oneOf
                     [ Parser.symbol ">>" |> Parser.map (\() -> List.reverse list |> Parser.Done)
-                    , Parser.succeed (\key value -> ( key, value ) :: list |> Parser.Loop)
+                    , Parser.succeed (\key value -> Debug.log "key" ( key, value ) :: list |> Parser.Loop)
                         |= nameParser
                         |. Parser.spaces
                         |= objectParser
@@ -1361,7 +1771,11 @@ dictParser =
         |. Parser.spaces
 
 
-streamParser : Bytes -> String -> List ( String, Object ) -> Parser ( List ( String, Object ), Maybe String )
+streamParser :
+    Bytes
+    -> String
+    -> List ( String, Object )
+    -> Parser (Maybe (List GraphicsInstruction))
 streamParser originalBytes originalText dict =
     case
         ( List.filterMap
@@ -1388,73 +1802,141 @@ streamParser originalBytes originalText dict =
         )
     of
         ( [ length ], maybeFilter ) ->
-            Parser.succeed
-                (\( row, column ) ->
-                    let
-                        offset =
-                            String.split "\n" originalText
-                                |> List.take (row - 1)
-                                |> List.map String.length
-                                |> List.sum
-                                |> (+) column
-                                |> Debug.log "offset"
-
-                        _ =
-                            Debug.log "position" ( row, column )
-
-                        result : String
-                        result =
-                            case sliceBytes offset length originalBytes of
-                                Just bytes ->
-                                    let
-                                        _ =
-                                            Debug.log "bytesToString" (Hex.Convert.toString bytes)
-                                    in
-                                    case maybeFilter of
-                                        Just "FlateDecode" ->
-                                            case Flate.inflateZlib bytes of
-                                                Just inflated ->
-                                                    BD.decode (BD.string (Bytes.width inflated)) inflated
-                                                        |> Maybe.withDefault "to string failed"
-
-                                                Nothing ->
-                                                    "Inflate failed"
-
-                                        Just filter ->
-                                            "Can't handle that filter type: " ++ filter
-
-                                        Nothing ->
-                                            BD.decode (BD.string (Bytes.width bytes)) bytes
-                                                |> Maybe.withDefault "to string failed"
-
-                                Nothing ->
-                                    "Failed to slice bytes"
-
-                        _ =
-                            Debug.log "stream" result
-                    in
-                    ( dict, Nothing )
-                )
+            Parser.succeed identity
                 |. Parser.symbol "stream\n"
                 |= Parser.getPosition
+                |> Parser.andThen
+                    (\( row, column ) ->
+                        let
+                            offset : Int
+                            offset =
+                                String.split "\n" originalText
+                                    |> List.take (row - 1)
+                                    |> List.map (\text2 -> String.length text2 + 1)
+                                    |> List.sum
+                                    |> (+) (column - 1)
+                        in
+                        case sliceBytes offset length originalBytes of
+                            Just bytes ->
+                                case maybeFilter of
+                                    Just "FlateDecode" ->
+                                        case Flate.inflateZlib bytes of
+                                            Just inflated ->
+                                                case BD.decode (BD.string (Bytes.width inflated)) inflated of
+                                                    Just streamText ->
+                                                        let
+                                                            _ =
+                                                                Debug.log "streamText" streamText
+                                                        in
+                                                        case Parser.run graphicsParser2 streamText of
+                                                            Ok ok ->
+                                                                Parser.succeed (Just ok)
+
+                                                            Err error ->
+                                                                let
+                                                                    _ =
+                                                                        Debug.log "stream error" error
+                                                                in
+                                                                Parser.problem "Stream parsing failed"
+
+                                                    Nothing ->
+                                                        Parser.problem "Stream parsing failed"
+
+                                            Nothing ->
+                                                Parser.problem "Inflate failed"
+
+                                    Just filter ->
+                                        Parser.problem ("Can't handle that filter type: " ++ filter)
+
+                                    Nothing ->
+                                        case BD.decode (BD.string (Bytes.width bytes)) bytes of
+                                            Just streamText ->
+                                                case Parser.run graphicsParser2 streamText of
+                                                    Ok ok ->
+                                                        Parser.succeed (Just ok)
+
+                                                    Err _ ->
+                                                        Parser.problem "Stream parsing failed"
+
+                                            Nothing ->
+                                                Parser.problem "Stream parsing failed"
+
+                            Nothing ->
+                                Parser.problem "Failed to slice bytes"
+                    )
 
         ( [], _ ) ->
-            Parser.succeed ( dict, Nothing )
+            Parser.succeed Nothing
                 |. Parser.symbol "endobj"
 
         _ ->
             Parser.problem "Found multiple length values"
 
 
-topLevelObjectParser : Bytes -> String -> Parser ( IndirectReference_, List ( String, Object ) )
+type alias GraphicsInstruction =
+    { operator : Operator, parameters : List Object }
+
+
+graphicsParser2 : Parser (List GraphicsInstruction)
+graphicsParser2 =
+    Parser.loop
+        []
+        (\list ->
+            Parser.oneOf
+                [ Parser.succeed (\item -> item :: list |> Parser.Loop)
+                    |= graphicsParser
+                    |. Parser.spaces
+                , Parser.end |> Parser.map (\() -> List.reverse list |> Parser.Done)
+                ]
+        )
+
+
+graphicsParser : Parser GraphicsInstruction
+graphicsParser =
+    Parser.loop
+        Array.empty
+        (\array ->
+            Parser.oneOf
+                [ Parser.succeed (\items -> Array.append array (Array.fromList items) |> Parser.Loop)
+                    |= objectInArrayParser
+                    |. Parser.spaces
+                , Parser.chompWhile (\char -> Char.isAlpha char || char == '*' || char == '"' || char == '\'')
+                    |> Parser.getChompedString
+                    |> Parser.andThen
+                        (\text2 ->
+                            case Dict.get text2 operators of
+                                Just operator ->
+                                    { operator = operator, parameters = Array.toList array } |> Parser.Done |> Parser.succeed
+
+                                Nothing ->
+                                    Parser.problem ("Invalid operator " ++ text2)
+                        )
+                ]
+        )
+
+
+topLevelObjectParser : Bytes -> String -> Parser ( IndirectReference_, Object )
 topLevelObjectParser originalBytes originalText =
-    Parser.succeed (\index revision ( dict, maybeStream ) -> ( { index = index, revision = revision }, dict ))
+    Parser.succeed
+        (\index revision ( dict, maybeStream ) ->
+            ( { index = index, revision = revision }
+            , case maybeStream of
+                Just stream ->
+                    Stream dict (DrawingInstructions stream)
+
+                Nothing ->
+                    PdfDict dict
+            )
+        )
         |= Parser.int
         |. Parser.spaces
         |= Parser.int
         |. Parser.spaces
         |. Parser.symbol "obj"
-        |= (dictParser |> Parser.andThen (streamParser originalBytes originalText))
+        |= (dictParser
+                |> Parser.andThen
+                    (\dict -> streamParser originalBytes originalText dict |> Parser.map (Tuple.pair dict))
+           )
 
 
 sliceBytes : Int -> Int -> Bytes -> Maybe Bytes
@@ -1492,46 +1974,96 @@ objectParser =
 
 intFloatOrIndirectReferenceParser : Parser (List Object)
 intFloatOrIndirectReferenceParser =
-    Parser.oneOf
-        [ Parser.succeed (\int -> [ PdfInt -int ])
-            |. Parser.symbol "-"
-            |= Parser.int
-        , backtrackableIntParser
-            |. Parser.spaces
-            |> Parser.andThen
-                (\first ->
-                    Parser.oneOf
-                        [ backtrackableIntParser
-                            |. Parser.spaces
-                            |> Parser.andThen
-                                (\second ->
-                                    Parser.oneOf
-                                        [ Parser.succeed [ IndirectReference { index = first, revision = second } ]
-                                            |. Parser.symbol "R"
-                                        , Parser.succeed (\third -> [ PdfInt first, PdfInt second, PdfInt third ])
-                                            |= backtrackableIntParser
-                                        , Parser.succeed (\third -> [ PdfInt first, PdfInt second, PdfFloat third ])
-                                            |= Parser.float
-                                        ]
-                                )
-                        , Parser.succeed (\second -> [ PdfInt first, PdfFloat second ])
-                            |= Parser.float
-                        , Parser.chompWhile
-                            (\char -> char /= '/' && char /= '>' && char /= ']' && char /= ')' && char /= '}')
-                            |> Parser.getChompedString
-                            |> Parser.andThen
-                                (\text2 ->
-                                    if text2 == "" then
-                                        Parser.succeed [ PdfInt first ]
+    Parser.andThen
+        (\first ->
+            case first of
+                IsFloat float ->
+                    Parser.succeed [ PdfFloat float ]
 
-                                    else
-                                        Parser.problem "Failed to decode int, float, or indirect reference"
+                IsInt firstInt ->
+                    Parser.succeed identity
+                        |. Parser.spaces
+                        |= Parser.oneOf
+                            [ Parser.andThen
+                                (\second ->
+                                    case second of
+                                        IsFloat float ->
+                                            Parser.succeed [ PdfInt firstInt, PdfFloat float ]
+
+                                        IsInt secondInt ->
+                                            Parser.succeed identity
+                                                |. Parser.spaces
+                                                |= Parser.oneOf
+                                                    [ Parser.succeed [ IndirectReference { index = firstInt, revision = secondInt } ]
+                                                        |. Parser.symbol "R"
+                                                    , Parser.succeed (\third -> [ PdfInt firstInt, PdfInt secondInt, PdfInt third ])
+                                                        |= backtrackableIntParser
+                                                    , Parser.succeed (\third -> [ PdfInt firstInt, PdfInt secondInt, PdfFloat third ])
+                                                        |= Parser.float
+                                                    ]
                                 )
-                        ]
-                )
-        , Parser.float |> Parser.map (\a -> [ PdfFloat a ])
-        ]
-        |. Parser.spaces
+                                floatOrIntParser
+                            , Parser.succeed [ PdfInt firstInt ]
+                            ]
+        )
+        floatOrIntParser
+
+
+type FloatOrInt
+    = IsFloat Float
+    | IsInt Int
+
+
+floatOrIntParser : Parser FloatOrInt
+floatOrIntParser =
+    Parser.succeed
+        (\negate number maybeDecimal ->
+            let
+                negateText : String
+                negateText =
+                    if negate then
+                        "-"
+
+                    else
+                        ""
+            in
+            case maybeDecimal of
+                Just decimal ->
+                    case negateText ++ number ++ "." ++ decimal |> String.toFloat of
+                        Just float ->
+                            IsFloat float
+
+                        Nothing ->
+                            -- Should never happen
+                            IsFloat 123
+
+                Nothing ->
+                    case negateText ++ number |> String.toInt of
+                        Just int ->
+                            IsInt int
+
+                        Nothing ->
+                            -- Should never happen
+                            IsInt 321
+        )
+        |= Parser.oneOf
+            [ Parser.symbol "-" |> Parser.map (\() -> True)
+            , Parser.succeed False
+            ]
+        |= chompOneOrMore Char.isDigit
+        |= Parser.oneOf
+            [ Parser.succeed Just
+                |. Parser.symbol "."
+                |= chompOneOrMore Char.isDigit
+            , Parser.succeed Nothing
+            ]
+
+
+chompOneOrMore : (Char -> Bool) -> Parser String
+chompOneOrMore func =
+    Parser.succeed (\first rest -> first ++ rest)
+        |= Parser.getChompedString (Parser.chompIf func)
+        |= Parser.getChompedString (Parser.chompWhile func)
 
 
 backtrackableIntParser : Parser Int
@@ -1545,7 +2077,6 @@ objectInArrayParser =
         [ intFloatOrIndirectReferenceParser
         , basicObjectParser |> Parser.map List.singleton
         ]
-        |. Parser.spaces
 
 
 textParser : Parser Object
@@ -1553,13 +2084,51 @@ textParser =
     Parser.oneOf
         [ Parser.succeed Text
             |. Parser.symbol "<"
-            |= (Parser.chompWhile (\char -> char /= '>') |> Parser.getChompedString)
-            |. Parser.symbol ">"
+            |= textParserHelper '>'
         , Parser.succeed Text
             |. Parser.symbol "("
-            |= (Parser.chompWhile (\char -> char /= ')') |> Parser.getChompedString)
-            |. Parser.symbol ")"
+            |= textParserHelper ')'
         ]
+
+
+textParserHelper : Char -> Parser String
+textParserHelper delimiter =
+    Parser.loop
+        ""
+        (\state ->
+            Parser.oneOf
+                [ Parser.symbol (String.fromChar delimiter) |> Parser.map (\() -> Parser.Done state)
+                , Parser.oneOf
+                    [ Parser.succeed identity
+                        |. Parser.symbol "\\"
+                        |= Parser.oneOf
+                            [ Parser.symbol "\\" |> Parser.map (\() -> "\\")
+                            , Parser.symbol ")" |> Parser.map (\() -> ")")
+                            , Parser.symbol "(" |> Parser.map (\() -> "(")
+                            , Parser.symbol ">" |> Parser.map (\() -> ">")
+                            , Parser.symbol "<" |> Parser.map (\() -> "<")
+                            , Parser.succeed
+                                (\one two three ->
+                                    case [ one, two, three ] |> String.concat |> String.toInt |> Maybe.map Char.fromCode of
+                                        Just char ->
+                                            String.fromChar char
+
+                                        Nothing ->
+                                            let
+                                                _ =
+                                                    Debug.log "invalid char" ""
+                                            in
+                                            " "
+                                )
+                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
+                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
+                                |= Parser.getChompedString (Parser.chompIf Char.isDigit)
+                            ]
+                    , Parser.chompWhile (\char -> char /= '\\' && char /= delimiter) |> Parser.getChompedString
+                    ]
+                    |> Parser.map (\text2 -> state ++ Debug.log "chomp" text2 |> Parser.Loop)
+                ]
+        )
 
 
 arrayParser : Parser Object
@@ -1573,6 +2142,7 @@ arrayParser =
                 Parser.oneOf
                     [ Parser.succeed (\items -> Array.append array (Array.fromList items) |> Parser.Loop)
                         |= objectInArrayParser
+                        |. Parser.spaces
                     , Parser.symbol "]" |> Parser.map (\() -> Parser.Done array)
                     ]
             )
@@ -1640,17 +2210,12 @@ indirectObjectIndex (IndirectObject { index }) =
 
 type StreamContent
     = ResourceData Bytes
-    | DrawingInstructions String
+    | DrawingInstructions (List GraphicsInstruction)
 
 
 floatToString : Float -> String
 floatToString =
     Round.round 5
-
-
-lengthToString : Length -> String
-lengthToString =
-    Length.inPoints >> floatToString
 
 
 
