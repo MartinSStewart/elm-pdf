@@ -4,6 +4,7 @@ import Array
 import Bytes exposing (Bytes)
 import Bytes.Decode as BD
 import Bytes.Encode as BE
+import Dict
 import Expect
 import Flate
 import Hex.Convert
@@ -11,6 +12,7 @@ import Parser
 import Pdf exposing (GraphicsInstruction, Object(..), Operator(..), StreamContent(..))
 import Pixels
 import Rc4
+import Rc4_2
 import Test exposing (Test, describe, test)
 
 
@@ -42,25 +44,28 @@ tests =
                     bytes2 =
                         BE.string text |> BE.encode
                 in
-                Parser.run (Pdf.topLevelObjectParser bytes2 text) text
+                Parser.run (Pdf.topLevelObjectParser Nothing bytes2 text) text
                     |> Expect.equal
                         (Ok
-                            ( { index = 33, revision = 0 }
-                            , PdfDict
-                                [ ( "Type", Name "Page" )
-                                , ( "Parent", IndirectReference { index = 2, revision = 0 } )
-                                , ( "MediaBox"
-                                  , PdfArray (Array.fromList [ PdfInt 0, PdfInt 0, PdfFloat 595.2756, PdfFloat 841.8898 ])
-                                  )
-                                , ( "Contents", IndirectReference { index = 34, revision = 0 } )
-                                , ( "Resources"
-                                  , PdfDict
-                                        [ ( "Font"
-                                          , PdfDict [ ( "F1", IndirectReference { index = 4, revision = 0 } ) ]
-                                          )
-                                        ]
-                                  )
-                                ]
+                            ([ ( "Type", Name "Page" )
+                             , ( "Parent", IndirectReference { index = 2, revision = 0 } )
+                             , ( "MediaBox"
+                               , PdfArray (Array.fromList [ PdfInt 0, PdfInt 0, PdfFloat 595.2756, PdfFloat 841.8898 ])
+                               )
+                             , ( "Contents", IndirectReference { index = 34, revision = 0 } )
+                             , ( "Resources"
+                               , [ ( "Font"
+                                   , [ ( "F1", IndirectReference { index = 4, revision = 0 } ) ]
+                                        |> Dict.fromList
+                                        |> PdfDict
+                                   )
+                                 ]
+                                    |> Dict.fromList
+                                    |> PdfDict
+                               )
+                             ]
+                                |> Dict.fromList
+                                |> PdfDict
                             )
                         )
         , test "Decode2" <|
@@ -69,12 +74,11 @@ tests =
                     text =
                         BD.decode (BD.string 303) exampleTopLevelObject |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser exampleTopLevelObject text) text
+                Parser.run (Pdf.topLevelObjectParser Nothing exampleTopLevelObject text) text
                     |> Expect.equal
                         (Ok
-                            ( { index = 34, revision = 0 }
-                            , Stream
-                                [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 236 ) ]
+                            (Stream
+                                (Dict.fromList [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 236 ) ])
                                 (DrawingInstructions
                                     [ { operator = BT, parameters = [] }
                                     , { operator = Tr, parameters = [ PdfInt 0 ] }
@@ -124,16 +128,15 @@ tests =
                             exampleTopLevelObject2
                             |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser exampleTopLevelObject2 text) text
+                Parser.run (Pdf.topLevelObjectParser Nothing exampleTopLevelObject2 text) text
                     |> Expect.equal
                         (Ok
-                            ( { index = 20, revision = 0 }
-                            , Stream
-                                [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 3153 ) ]
+                            (Stream
+                                (Dict.fromList [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 3153 ) ])
                                 (DrawingInstructions expectedDrawingInstructions)
                             )
                         )
-        , test "RC4" <|
+        , test "RC4 encode" <|
             \() ->
                 let
                     key =
@@ -144,7 +147,59 @@ tests =
                 in
                 Rc4.encrypt key plainText
                     |> Expect.equal [ 16, 33, 191, 4, 32 ]
+        , test "RC4 decode" <|
+            \() ->
+                let
+                    key =
+                        "Wiki"
+
+                    plainText =
+                        [ 16, 33, 191, 4, 32 ]
+                in
+                Rc4.decrypt key plainText
+                    |> Expect.equal "pedia"
+        , test "Encrypted stream" <|
+            \() ->
+                let
+                    ownerHash =
+                        "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 5C 69 A7"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+                    userHash =
+                        "98 06 D8 E0 96 5D 80 2D F1 AF 6B 68 B8 D7 B8 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+                    idEntry =
+                        "d19ade06181e7ee412ba31589d95c0bed19ade06181e7ee412ba31589d95c0be"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+                    pEntry =
+                        "2D 31 38 35 32"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+                    key =
+                        Pdf.getRc4Key 128 ownerHash Pdf.defaultPassword pEntry idEntry
+                in
+                Rc4_2.decrypt key encryptedStream
+                    |> Hex.Convert.toString
+                    |> Expect.equal ""
         ]
+
+
+encryptedStream : Bytes
+encryptedStream =
+    "69 CE EE 60 AA EF AB 66 BB 44 F6 D0 48 4F E8 D7 9A 65 D8 9C 9A 1B 97 60 B1 DC C7 98 4E 53 73 3E 77 5C 8F 1D C0 10 B8 09 86 65 EF 1F 51 29 01 B3 C1 7E 4B 39 7A E0 F8 31 02 30 E9 EF 24 62 45 D5 06 01 81 9D 5F 1C A2 2B 06 2F F0 E7 A2 E6 E5 E5 37 01 4E 07 5D 9F 64 DC C7 7C 59 82 03 D4 11 3E 08 69 28 C1 E9 3E 75 F5 1A 25 43 F4 61 0E 3D A1 67 69 E2 FF AC 37 1A B9 23 9E 59 80 F3 1B C5 B7 E6 35 CA 2F C9 E9 BB D9 3A 56 90 5A 4B EE 0C 7C 0D 0B 3F 8C 79 75 0C D1 A6 4A A4 44 7A 0E 52 30 8B AB 38 41 E8 5F CA B6 87 B1 B9 0F 97 71 AC 6D 22 BC C0 A0 2D CF 08 A6 4B B4 CA 2E 9F 73 F9 C2 1E F2 5C 45 52 63 F9 90 BE 51 04 65 A1 8C 7A 4A 93 81 82 B5 CD D0 46 7C 27 C7 81 4E B8 A3 10 AC 5C 09 35 EF DE 64 73 35 C3 27 E6 E0 45 83 ED 2C D6 42 98 32 F0 95 E7 9B 53 ED 2C F9 46 C5 8B 90 D5 0B 22 C4 6F DB 6F 84 CC 13 E4 80 41 59 44 FB D0 B4 E0 98 F9 70 77 4B 8D AB F9 AF 08 75 41 40 86 DF 0F C8 27 C5 52 74 B7 83 D4 F6 CC AF 33 25 97 6D 1D CE 4E 05 F1 A0 FD 07 E8 B4 C1 A1 C9 82 C0 6F 9D D5 BB 75 8B FA A6 4C 45 AF 01 7D C8 A2 F6 42 F9 D7"
+        |> String.filter Char.isAlphaNum
+        |> Hex.Convert.toBytes
+        |> Maybe.withDefault (BE.encode (BE.sequence []))
 
 
 exampleTopLevelObject : Bytes

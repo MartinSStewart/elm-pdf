@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), fromBytes, topLevelObjectParser
+    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), defaultPassword, fromBytes, getRc4Key, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -47,7 +47,7 @@ Custom fonts have to be embedded in the file in order to be used and this packag
 
 import Array exposing (Array)
 import BoundingBox2d exposing (BoundingBox2d)
-import Bytes exposing (Bytes)
+import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as BD
 import Bytes.Encode as BE
 import Dict exposing (Dict)
@@ -55,6 +55,7 @@ import Flate
 import Hex.Convert
 import Length exposing (Length, Meters)
 import List.Nonempty exposing (Nonempty(..))
+import MD5
 import Parser exposing ((|.), (|=), DeadEnd, Parser)
 import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
@@ -488,7 +489,7 @@ decodeHeader =
 
 
 type alias DecodedPdf =
-    { metadata : List ( String, Object ), sections : List (Result (List DeadEnd) ( IndirectReference_, Object )) }
+    { metadata : Dict String Object, sections : List ( IndirectReference_, Result (List DeadEnd) Object ) }
 
 
 type alias PdfVersion =
@@ -532,7 +533,7 @@ getXRefOffset bytes =
 
 
 type alias XRefTable =
-    { references : List Int, metadata : List ( String, Object ) }
+    { references : List Int, metadata : Dict String Object }
 
 
 fromBytes : Bytes -> Result String DecodedPdf
@@ -544,37 +545,56 @@ fromBytes bytes =
                     case decodeAscii bytes2 |> Parser.run xRefParser of
                         Ok xRef ->
                             let
-                                sections : List (Result (List DeadEnd) ( IndirectReference_, Object ))
-                                sections =
+                                sections0 : Dict ( Int, Int ) { bytes : Bytes, text : String }
+                                sections0 =
                                     List.foldr
                                         (\offset state ->
                                             let
                                                 size =
                                                     state.next - offset
-
-                                                result2 =
-                                                    case sliceBytes offset size bytes of
-                                                        Just endSection ->
-                                                            let
-                                                                endSectionText =
-                                                                    decodeAscii endSection
-                                                            in
-                                                            Parser.run
-                                                                (topLevelObjectParser endSection endSectionText)
-                                                                endSectionText
-
-                                                        Nothing ->
-                                                            Err []
                                             in
                                             { next = offset
-                                            , sections = result2 :: state.sections
+                                            , sections =
+                                                case sliceBytes offset size bytes of
+                                                    Just endSection ->
+                                                        let
+                                                            endSectionText =
+                                                                decodeAscii endSection
+                                                        in
+                                                        case Parser.run topLevelReferenceParser endSectionText of
+                                                            Ok ref ->
+                                                                Dict.insert
+                                                                    ( ref.index, ref.revision )
+                                                                    { bytes = endSection, text = endSectionText }
+                                                                    state.sections
+
+                                                            Err _ ->
+                                                                state.sections
+
+                                                    Nothing ->
+                                                        state.sections
                                             }
                                         )
-                                        { next = xRefOffset, sections = [] }
+                                        { next = xRefOffset, sections = Dict.empty }
                                         xRef.references
                                         |> .sections
+
+                                maybeEncryption =
+                                    handleEncryption xRef sections0
+
+                                sections1 : List ( IndirectReference_, Result (List DeadEnd) Object )
+                                sections1 =
+                                    List.map
+                                        (\( ( index, revision ), section ) ->
+                                            ( { index = index, revision = revision }
+                                            , Parser.run
+                                                (topLevelObjectParser maybeEncryption section.bytes section.text)
+                                                section.text
+                                            )
+                                        )
+                                        (Dict.toList sections0)
                             in
-                            Ok { metadata = xRef.metadata, sections = sections }
+                            Ok { metadata = xRef.metadata, sections = sections1 }
 
                         Err _ ->
                             Err "Failed to decode xref"
@@ -584,6 +604,58 @@ fromBytes bytes =
 
         Err error ->
             Err error
+
+
+defaultPassword : Bytes
+defaultPassword =
+    BE.unsignedInt8 32 |> BE.encode
+
+
+handleEncryption :
+    XRefTable
+    -> Dict ( Int, Int ) { bytes : Bytes, text : String }
+    -> Maybe Bytes
+handleEncryption xRef sections0 =
+    case ( Dict.get "Encrypt" xRef.metadata, Dict.get "ID" xRef.metadata ) of
+        ( Just (IndirectReference ref), Just (PdfArray idData) ) ->
+            case Dict.get ( ref.index, ref.revision ) sections0 of
+                Just section ->
+                    case Parser.run (topLevelObjectParser Nothing section.bytes section.text) section.text of
+                        Ok (PdfDict dict) ->
+                            case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
+                                ( Just (PdfInt length), Just (Text pEntry), Just (Text ownerHash) ) ->
+                                    getRc4Key
+                                        (length // 8)
+                                        (BE.string ownerHash |> BE.encode)
+                                        defaultPassword
+                                        (BE.string pEntry |> BE.encode)
+                                        (Array.toList idData
+                                            |> List.filterMap
+                                                (\a ->
+                                                    case a of
+                                                        HexString hex ->
+                                                            Just hex
+
+                                                        _ ->
+                                                            Nothing
+                                                )
+                                            |> String.concat
+                                            |> Hex.Convert.toBytes
+                                            |> Maybe.withDefault emptyBytes
+                                        )
+                                        |> Just
+
+                                _ ->
+                                    Nothing
+
+                        result ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
+
+        _ ->
+            Nothing
 
 
 {-| An encoder for converting the PDF to binary data.
@@ -604,13 +676,16 @@ encoder pdf_ =
         info =
             indirectObject
                 infoIndirectReference
-                (PdfDict [ ( "Title", Text (title pdf_) ) ])
+                ([ ( "Title", Text (title pdf_) ) ] |> Dict.fromList |> PdfDict)
 
         catalog : IndirectObject
         catalog =
             indirectObject
                 catalogIndirectReference
-                (PdfDict [ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ])
+                ([ ( "Type", Name "Catalog" ), ( "Pages", IndirectReference pageRootIndirectReference ) ]
+                    |> Dict.fromList
+                    |> PdfDict
+                )
 
         fontOffset : Int
         fontOffset =
@@ -676,11 +751,12 @@ encoder pdf_ =
                     ++ (List.map xRefLine xRefs |> String.concat)
                     ++ "trailer\n"
                     |> BE.string
-                , encodePdfDict
-                    [ ( "Size", PdfInt xRefCount )
-                    , ( "Info", IndirectReference infoIndirectReference )
-                    , ( "Root", IndirectReference catalogIndirectReference )
-                    ]
+                , [ ( "Size", PdfInt xRefCount )
+                  , ( "Info", IndirectReference infoIndirectReference )
+                  , ( "Root", IndirectReference catalogIndirectReference )
+                  ]
+                    |> Dict.fromList
+                    |> encodePdfDict
                 , BE.string "\nstartxref\n"
                 ]
     in
@@ -751,41 +827,44 @@ pageRoot allPages_ pdf_ fonts fontIndexOffset =
          , ( "Count", PdfInt (List.length (pages pdf_)) )
          , ( "Type", Name "Pages" )
          , ( "Resources"
-           , PdfDict
-                (( "Font"
-                 , List.indexedMap
-                    (\index _ ->
-                        ( "F" ++ String.fromInt (index + 1)
-                        , IndirectReference { index = index + fontIndexOffset, revision = 0 }
-                        )
+           , ( "Font"
+             , List.indexedMap
+                (\index _ ->
+                    ( "F" ++ String.fromInt (index + 1)
+                    , IndirectReference { index = index + fontIndexOffset, revision = 0 }
                     )
-                    fonts
-                    |> PdfDict
-                 )
-                    :: ( "PRocSet", [ Name "PDF", Name "Text" ] |> Array.fromList |> PdfArray )
-                    :: (case dictToIndexDict (images pdf_) |> Dict.toList of
-                            head :: rest ->
-                                head
-                                    :: rest
-                                    |> List.map
-                                        (\( _, { index } ) ->
-                                            ( "Im" ++ String.fromInt index
-                                            , IndirectReference
-                                                { index = index + List.length fonts + fontIndexOffset - 1
-                                                , revision = 0
-                                                }
-                                            )
-                                        )
-                                    |> PdfDict
-                                    |> Tuple.pair "XObject"
-                                    |> List.singleton
-
-                            [] ->
-                                []
-                       )
                 )
+                fonts
+                |> Dict.fromList
+                |> PdfDict
+             )
+                :: ( "PRocSet", [ Name "PDF", Name "Text" ] |> Array.fromList |> PdfArray )
+                :: (case dictToIndexDict (images pdf_) |> Dict.toList of
+                        head :: rest ->
+                            head
+                                :: rest
+                                |> List.map
+                                    (\( _, { index } ) ->
+                                        ( "Im" ++ String.fromInt index
+                                        , IndirectReference
+                                            { index = index + List.length fonts + fontIndexOffset - 1
+                                            , revision = 0
+                                            }
+                                        )
+                                    )
+                                |> Dict.fromList
+                                |> PdfDict
+                                |> Tuple.pair "XObject"
+                                |> List.singleton
+
+                        [] ->
+                            []
+                   )
+                |> Dict.fromList
+                |> PdfDict
            )
          ]
+            |> Dict.fromList
             |> PdfDict
         )
 
@@ -794,12 +873,13 @@ fontObject : IndirectReference_ -> Font -> IndirectObject
 fontObject indirectReference font_ =
     indirectObject
         indirectReference
-        (PdfDict
-            [ ( "Type", Name "Font" )
-            , ( "Subtype", Name "Type1" )
-            , ( "BaseFont", Name (fontName font_) )
-            , ( "Encoding", Name "WinAnsiEncoding" )
-            ]
+        ([ ( "Type", Name "Font" )
+         , ( "Subtype", Name "Type1" )
+         , ( "BaseFont", Name (fontName font_) )
+         , ( "Encoding", Name "WinAnsiEncoding" )
+         ]
+            |> Dict.fromList
+            |> PdfDict
         )
 
 
@@ -814,14 +894,16 @@ imageObject index (JpegImage image) =
         , revision = 0
         , object =
             Stream
-                [ ( "Type", Name "XObject" )
-                , ( "Subtype", Name "Image" )
-                , ( "Width", PdfInt width )
-                , ( "Height", PdfInt height )
-                , ( "ColorSpace", Name "DeviceRGB" )
-                , ( "BitsPerComponent", PdfInt 8 )
-                , ( "Filter", Name "DCTDecode" )
-                ]
+                (Dict.fromList
+                    [ ( "Type", Name "XObject" )
+                    , ( "Subtype", Name "Image" )
+                    , ( "Width", PdfInt width )
+                    , ( "Height", PdfInt height )
+                    , ( "ColorSpace", Name "DeviceRGB" )
+                    , ( "BitsPerComponent", PdfInt 8 )
+                    , ( "Filter", Name "DCTDecode" )
+                    ]
+                )
                 (ResourceData image.jpegData)
         }
 
@@ -896,17 +978,18 @@ pageObjects fonts images_ indexStart pages_ =
                 { page =
                     indirectObject
                         { index = index * 2 + indexStart, revision = 0 }
-                        (PdfDict
-                            [ ( "Type", Name "Page" )
-                            , mediaBox pageSize
-                            , ( "Parent", IndirectReference pageRootIndirectReference )
-                            , ( "Contents", IndirectReference contentIndirectReference )
-                            ]
+                        ([ ( "Type", Name "Page" )
+                         , mediaBox pageSize
+                         , ( "Parent", IndirectReference pageRootIndirectReference )
+                         , ( "Contents", IndirectReference contentIndirectReference )
+                         ]
+                            |> Dict.fromList
+                            |> PdfDict
                         )
                 , content =
                     indirectObject
                         contentIndirectReference
-                        (Stream [] streamContent)
+                        (Stream Dict.empty streamContent)
                 }
             )
 
@@ -1183,10 +1266,11 @@ type Object
     = Name String
     | PdfFloat Float
     | PdfInt Int
-    | PdfDict (List ( String, Object ))
+    | PdfDict (Dict String Object)
     | PdfArray (Array Object)
     | Text String
-    | Stream (List ( String, Object )) StreamContent
+    | HexString String
+    | Stream (Dict String Object) StreamContent
     | IndirectReference IndirectReference_
 
 
@@ -1215,12 +1299,15 @@ encodeObject object =
         Text text_ ->
             textToString text_ |> BE.string
 
+        HexString text2 ->
+            hexToString text2 |> BE.string
+
         Stream dict streamContent ->
             let
                 ( streamContent_, dict2 ) =
                     case streamContent of
                         ResourceData data ->
-                            ( data, ( "Length", PdfInt (Bytes.width data) ) :: dict )
+                            ( data, Dict.insert "Length" (PdfInt (Bytes.width data)) dict )
 
                         DrawingInstructions text_ ->
                             let
@@ -1238,14 +1325,13 @@ encodeObject object =
                                            )
                             in
                             ( textBytes
-                            , ( "Length", PdfInt (Bytes.width textBytes) )
-                                :: (if deflate then
-                                        [ ( "Filter", Name "FlateDecode" ) ]
+                            , Dict.insert "Length" (PdfInt (Bytes.width textBytes)) dict
+                                |> (if deflate then
+                                        Dict.insert "Filter" (Name "FlateDecode")
 
                                     else
-                                        []
+                                        identity
                                    )
-                                ++ dict
                             )
             in
             BE.sequence
@@ -1286,17 +1372,23 @@ textToString text_ =
         |> (\a -> "(" ++ a ++ ")")
 
 
+hexToString : String -> String
+hexToString text2 =
+    "<" ++ text2 ++ ">"
+
+
 nameToString : String -> String
 nameToString name =
     "/" ++ name
 
 
-encodePdfDict : List ( String, Object ) -> BE.Encoder
-encodePdfDict =
-    List.map (\( key, value ) -> BE.sequence [ BE.string (nameToString key ++ " "), encodeObject value ])
-        >> List.intersperse (BE.string " ")
-        >> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
-        >> BE.sequence
+encodePdfDict : Dict String Object -> BE.Encoder
+encodePdfDict dict =
+    Dict.toList dict
+        |> List.map (\( key, value ) -> BE.sequence [ BE.string (nameToString key ++ " "), encodeObject value ])
+        |> List.intersperse (BE.string " ")
+        |> (\a -> BE.string "<< " :: a ++ [ BE.string " >>" ])
+        |> BE.sequence
 
 
 type Operator
@@ -1733,7 +1825,7 @@ xRefEntryParser =
         |. Parser.spaces
 
 
-dictParser : Parser (List ( String, Object ))
+dictParser : Parser (Dict String Object)
 dictParser =
     Parser.succeed identity
         |. Parser.symbol "<<"
@@ -1742,7 +1834,7 @@ dictParser =
             []
             (\list ->
                 Parser.oneOf
-                    [ Parser.symbol ">>" |> Parser.map (\() -> List.reverse list |> Parser.Done)
+                    [ Parser.symbol ">>" |> Parser.map (\() -> Dict.fromList list |> Parser.Done)
                     , Parser.succeed (\key value -> ( key, value ) :: list |> Parser.Loop)
                         |= nameParser
                         |. Parser.spaces
@@ -1753,37 +1845,21 @@ dictParser =
         |. Parser.spaces
 
 
+type alias EncryptionData =
+    { key : Bytes
+    , reference : IndirectReference_
+    }
+
+
 streamParser :
-    Bytes
+    Maybe EncryptionData
+    -> Bytes
     -> String
-    -> List ( String, Object )
+    -> Dict String Object
     -> Parser (Maybe (List GraphicsInstruction))
-streamParser originalBytes originalText dict =
-    case
-        ( List.filterMap
-            (\( key, value ) ->
-                case ( key, value ) of
-                    ( "Length", PdfInt length ) ->
-                        Just length
-
-                    _ ->
-                        Nothing
-            )
-            dict
-        , List.filterMap
-            (\( key, value ) ->
-                case ( key, value ) of
-                    ( "Filter", Name filterName ) ->
-                        Just filterName
-
-                    _ ->
-                        Nothing
-            )
-            dict
-            |> List.head
-        )
-    of
-        ( [ length ], maybeFilter ) ->
+streamParser maybeEncryption originalBytes originalText dict =
+    case Dict.get "Length" dict of
+        Just (PdfInt length) ->
             Parser.succeed identity
                 |. Parser.symbol "stream\n"
                 |= Parser.getPosition
@@ -1800,8 +1876,11 @@ streamParser originalBytes originalText dict =
                         in
                         case sliceBytes offset length originalBytes of
                             Just bytes ->
-                                case maybeFilter of
-                                    Just "FlateDecode" ->
+                                case Dict.get "Filter" dict of
+                                    Just (Name "Standard") ->
+                                        Parser.succeed Nothing
+
+                                    Just (Name "FlateDecode") ->
                                         case Flate.inflateZlib bytes of
                                             Just inflated ->
                                                 case Parser.run graphicsParser2 (decodeAscii inflated) of
@@ -1818,10 +1897,10 @@ streamParser originalBytes originalText dict =
                                             Nothing ->
                                                 Parser.problem "Inflate failed"
 
-                                    Just filter ->
+                                    Just (Name filter) ->
                                         Parser.problem ("Can't handle that filter type: " ++ filter)
 
-                                    Nothing ->
+                                    _ ->
                                         case Parser.run graphicsParser2 (decodeAscii bytes) of
                                             Ok ok ->
                                                 Parser.succeed (Just ok)
@@ -1833,12 +1912,33 @@ streamParser originalBytes originalText dict =
                                 Parser.problem "Failed to slice bytes"
                     )
 
-        ( [], _ ) ->
+        _ ->
             Parser.succeed Nothing
                 |. Parser.symbol "endobj"
 
-        _ ->
-            Parser.problem "Found multiple length values"
+
+encodeAscii : String -> Maybe Bytes
+encodeAscii text2 =
+    if String.all (\char -> Char.toCode char < 256) text2 then
+        String.toList text2
+            |> List.map
+                (\char ->
+                    let
+                        charCode =
+                            Char.toCode char
+                    in
+                    if charCode < 256 then
+                        BE.unsignedInt8 charCode
+
+                    else
+                        BE.unsignedInt8 0
+                )
+            |> BE.sequence
+            |> BE.encode
+            |> Just
+
+    else
+        Nothing
 
 
 decodeAscii : Bytes -> String
@@ -1899,29 +1999,39 @@ graphicsParser =
         )
 
 
-topLevelObjectParser : Bytes -> String -> Parser ( IndirectReference_, Object )
-topLevelObjectParser originalBytes originalText =
-    Parser.succeed
-        (\index revision ( dict, maybeStream ) ->
-            ( { index = index, revision = revision }
-            , case maybeStream of
-                Just stream ->
-                    Stream dict (DrawingInstructions stream)
-
-                Nothing ->
-                    PdfDict dict
-            )
-        )
+topLevelReferenceParser : Parser IndirectReference_
+topLevelReferenceParser =
+    Parser.succeed (\index revision -> { index = index, revision = revision })
         |= Parser.int
         |. Parser.spaces
         |= Parser.int
         |. Parser.spaces
         |. Parser.symbol "obj"
+
+
+topLevelObjectParser : Maybe Bytes -> Bytes -> String -> Parser Object
+topLevelObjectParser encryptionKey originalBytes originalText =
+    Parser.succeed Tuple.pair
+        |= topLevelReferenceParser
         |. Parser.spaces
-        |= (dictParser
-                |> Parser.andThen
-                    (\dict -> streamParser originalBytes originalText dict |> Parser.map (Tuple.pair dict))
-           )
+        |= dictParser
+        |> Parser.andThen
+            (\( reference, dict ) ->
+                streamParser
+                    (Maybe.map (\key -> { key = key, reference = reference }) encryptionKey)
+                    originalBytes
+                    originalText
+                    dict
+                    |> Parser.map
+                        (\maybeStream ->
+                            case maybeStream of
+                                Just stream ->
+                                    Stream dict (DrawingInstructions stream)
+
+                                Nothing ->
+                                    PdfDict dict
+                        )
+            )
 
 
 sliceBytes : Int -> Int -> Bytes -> Maybe Bytes
@@ -1935,6 +2045,7 @@ basicObjectParser =
         [ dictParser |> Parser.map PdfDict
         , nameParser |> Parser.map Name
         , textParser
+        , hexStringParser
         , arrayParser
         ]
 
@@ -2065,16 +2176,69 @@ objectInArrayParser =
         ]
 
 
+paddingBytes : Bytes
+paddingBytes =
+    "28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A"
+        |> Hex.Convert.toBytes
+        |> Maybe.withDefault emptyBytes
+
+
+emptyBytes : Bytes
+emptyBytes =
+    BE.sequence [] |> BE.encode
+
+
+getRc4Key : Int -> Bytes -> Bytes -> Bytes -> Bytes -> Bytes
+getRc4Key hashByteLength oEntry userAsciiPassword pEntry idEntry =
+    BE.sequence
+        [ BE.bytes userAsciiPassword
+        , sliceBytes
+            (Bytes.width userAsciiPassword)
+            (Bytes.width paddingBytes - Bytes.width userAsciiPassword)
+            paddingBytes
+            |> Maybe.withDefault emptyBytes
+            |> BE.bytes
+        , BE.bytes oEntry
+        , BE.bytes pEntry
+        , BE.bytes idEntry
+        ]
+        |> BE.encode
+        |> Hex.Convert.toString
+        |> MD5.hex
+        |> Hex.Convert.toBytes
+        |> Maybe.withDefault emptyBytes
+        |> sliceBytes 0 hashByteLength
+        |> Maybe.withDefault emptyBytes
+
+
+
+--abc =
+--    BE.sequence
+--        [ BE.bytes globalHash
+--        , BE.unsignedInt16 LE ref.index
+--        , BE.unsignedInt8 0
+--        , BE.unsignedInt16 LE ref.revision
+--        ]
+--        |> BE.encode
+--        |> Hex.Convert.toString
+--        |> MD5.hex
+--        |> Hex.Convert.toBytes
+--        |> Maybe.withDefault emptyBytes
+--        |> sliceBytes 0 10
+
+
 textParser : Parser Object
 textParser =
-    Parser.oneOf
-        [ Parser.succeed Text
-            |. Parser.symbol "<"
-            |= textParserHelper '>'
-        , Parser.succeed Text
-            |. Parser.symbol "("
-            |= textParserHelper ')'
-        ]
+    Parser.succeed Text
+        |. Parser.symbol "("
+        |= textParserHelper ')'
+
+
+hexStringParser : Parser Object
+hexStringParser =
+    Parser.succeed Text
+        |. Parser.symbol "<"
+        |= textParserHelper '>'
 
 
 textParserHelper : Char -> Parser String

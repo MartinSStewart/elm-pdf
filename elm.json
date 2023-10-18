@@ -15,9 +15,10 @@
         "folkertdev/elm-flate": "2.0.4 <= v < 3.0.0",
         "ianmackenzie/elm-geometry": "3.5.0 <= v < 4.0.0",
         "ianmackenzie/elm-units": "2.5.0 <= v < 3.0.0",
+        "jxxcarlson/hex": "4.0.0 <= v < 5.0.0",
         "mgold/elm-nonempty-list": "4.2.0 <= v < 5.0.0",
         "myrho/elm-round": "1.0.4 <= v < 2.0.0",
-        "jxxcarlson/hex": "4.0.0 <= v < 5.0.0"
+        "truqu/elm-md5": "1.1.0 <= v < 2.0.0"
     },
     "test-dependencies": {
         "elm/random": "1.0.0 <= v < 2.0.0",
