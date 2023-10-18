@@ -8,8 +8,9 @@ import Expect
 import Flate
 import Hex.Convert
 import Parser
-import Pdf exposing (Object(..), Operator(..), StreamContent(..))
+import Pdf exposing (GraphicsInstruction, Object(..), Operator(..), StreamContent(..))
 import Pixels
+import Rc4
 import Test exposing (Test, describe, test)
 
 
@@ -114,27 +115,35 @@ tests =
                                 )
                             )
                         )
-        , Test.only <|
-            test "Decode3" <|
-                \() ->
-                    let
-                        text =
-                            BD.decode
-                                (BD.string (Bytes.width exampleTopLevelObject2))
-                                exampleTopLevelObject2
-                                |> Maybe.withDefault ""
-                    in
-                    Parser.run (Pdf.topLevelObjectParser exampleTopLevelObject2 text) text
-                        |> Expect.equal
-                            (Ok
-                                ( { index = 34, revision = 0 }
-                                , Stream
-                                    [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 236 ) ]
-                                    (DrawingInstructions
-                                        []
-                                    )
-                                )
+        , test "Decode3" <|
+            \() ->
+                let
+                    text =
+                        BD.decode
+                            (BD.string (Bytes.width exampleTopLevelObject2))
+                            exampleTopLevelObject2
+                            |> Maybe.withDefault ""
+                in
+                Parser.run (Pdf.topLevelObjectParser exampleTopLevelObject2 text) text
+                    |> Expect.equal
+                        (Ok
+                            ( { index = 20, revision = 0 }
+                            , Stream
+                                [ ( "Filter", Name "FlateDecode" ), ( "Length", PdfInt 3153 ) ]
+                                (DrawingInstructions expectedDrawingInstructions)
                             )
+                        )
+        , test "RC4" <|
+            \() ->
+                let
+                    key =
+                        "Wiki"
+
+                    plainText =
+                        "pedia"
+                in
+                Rc4.encrypt key plainText
+                    |> Expect.equal [ 16, 33, 191, 4, 32 ]
         ]
 
 
@@ -152,3 +161,870 @@ exampleTopLevelObject2 =
         |> String.filter Char.isAlphaNum
         |> Hex.Convert.toBytes
         |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+
+expectedDrawingInstructions : List GraphicsInstruction
+expectedDrawingInstructions =
+    [ { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 815.6863 ] }
+    , { operator = Tj, parameters = [ Text "Space heating fuel - secondary                                                                                                            0.0000 (215)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 809.2793 ] }
+    , { operator = Tj, parameters = [ Text "Electricity for pumps and fans:" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 802.8723 ] }
+    , { operator = Tj, parameters = [ Text "  central heating pump                                                                                                                 120.0000 (230c)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 796.4653 ] }
+    , { operator = Tj, parameters = [ Text "  main heating flue fan                                                                                                                 45.0000 (230e)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 790.0583 ] }
+    , { operator = Tj, parameters = [ Text "Total electricity for the above, kWh/year                                                                                               165.0000 (231)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 783.6514 ] }
+    , { operator = Tj, parameters = [ Text "Electricity for lighting (calculated in Appendix L)                                                                                     348.2015 (232)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 777.2444 ] }
+    , { operator = Tj, parameters = [ Text "Energy saving/generation technologies (Appendices M, N and Q)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 770.8374 ] }
+    , { operator = Tj, parameters = [ Text "PV generation                                                                                                                             0.0000 (233)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 764.4304 ] }
+    , { operator = Tj, parameters = [ Text "Wind generation                                                                                                                           0.0000 (234)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 758.0234 ] }
+    , { operator = Tj, parameters = [ Text "Hydro-electric generation (Appendix N)                                                                                                    0.0000 (235a)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 751.6164 ] }
+    , { operator = Tj, parameters = [ Text "Electricity generated - Micro CHP (Appendix N)                                                                                            0.0000 (235)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 745.2095 ] }
+    , { operator = Tj, parameters = [ Text "Appendix Q - special features" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 738.8025 ] }
+    , { operator = Tj, parameters = [ Text "  energy saved or generated                                                                                                              0.0000 (236)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 732.3955 ] }
+    , { operator = Tj, parameters = [ Text "  energy used                                                                                                                            0.0000 (237)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 725.9885 ] }
+    , { operator = Tj, parameters = [ Text "Total delivered energy for all uses                                                                                                   17084.4433 (238)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 719.5815 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 713.1746 ] }
+    , { operator = Tj, parameters = [ Text "10a. Fuel costs - using BEDF prices (527)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 706.7676 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 700.3606 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                               Fuel            Fuel price             Fuel cost" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 693.9536 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                           kWh/year                 p/kWh                £/year" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 687.5466 ] }
+    , { operator = Tj, parameters = [ Text "Space heating - main system 1                                                             13596.6989               10.2300             1390.9423 (240)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 681.1396 ] }
+    , { operator = Tj, parameters = [ Text "Water heating (other fuel)                                                                 2974.5429               10.2300              304.2957 (247)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 674.7327 ] }
+    , { operator = Tj, parameters = [ Text "Pumps and fans for heating                                                                  165.0000               36.7200               60.5880 (249)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 668.3257 ] }
+    , { operator = Tj, parameters = [ Text "Energy for lighting                                                                         348.2015               36.7200              127.8596 (250)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 661.9187 ] }
+    , { operator = Tj, parameters = [ Text "Additional standing charges                                                                                                             103.0000 (251)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 655.5117 ] }
+    , { operator = Tj, parameters = [ Text "Total energy cost                                                                                                                      1986.6856 (255)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 649.1047 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 642.6977 ] }
+    , { operator = Tj, parameters = [ Text "12a. Carbon dioxide emissions - Individual heating systems including micro-CHP" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 636.2908 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 629.8838 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                             Energy       Emission factor             Emissions" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 623.4768 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                           kWh/year            kg CO2/kWh           kg CO2/year" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 617.0698 ] }
+    , { operator = Tj, parameters = [ Text "Space heating - main system 1                                                             13596.6989                0.2160             2936.8870 (261)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 610.6628 ] }
+    , { operator = Tj, parameters = [ Text "Water heating (other fuel)                                                                 2974.5429                0.2160              642.5013 (264)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 604.2559 ] }
+    , { operator = Tj, parameters = [ Text "Space and water heating                                                                                                                3579.3882 (265)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 597.8489 ] }
+    , { operator = Tj, parameters = [ Text "Pumps and fans                                                                              165.0000                0.5190               85.6350 (267)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 591.4419 ] }
+    , { operator = Tj, parameters = [ Text "Energy for lighting                                                                         348.2015                0.5190              180.7166 (268)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 585.0349 ] }
+    , { operator = Tj, parameters = [ Text "Total kg/year                                                                                                                          3845.7398 (272)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 578.6279 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 572.2209 ] }
+    , { operator = Tj, parameters = [ Text "13a. Primary energy - Individual heating systems including micro-CHP" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 565.814 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 559.407 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                             Energy Primary energy factor        Primary energy" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfInt 553 ] }
+    , { operator = Tj, parameters = [ Text "                                                                                           kWh/year            kg CO2/kWh              kWh/year" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 546.593 ] }
+    , { operator = Tj, parameters = [ Text "Space heating - main system 1                                                             13596.6989                1.2200            16587.9726 (261)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 540.186 ] }
+    , { operator = Tj, parameters = [ Text "Water heating (other fuel)                                                                 2974.5429                1.2200             3628.9424 (264)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 533.779 ] }
+    , { operator = Tj, parameters = [ Text "Space and water heating                                                                                                               20216.9150 (265)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 527.3721 ] }
+    , { operator = Tj, parameters = [ Text "Pumps and fans                                                                              165.0000                3.0700              506.5500 (267)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 520.9651 ] }
+    , { operator = Tj, parameters = [ Text "Energy for lighting                                                                         348.2015                3.0700             1068.9786 (268)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 514.5581 ] }
+    , { operator = Tj, parameters = [ Text "Primary energy kWh/year                                                                                                               21792.4436 (272)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 508.1511 ] }
+    , { operator = Tj, parameters = [ Text "Primary energy kWh/m2/year                                                                                                              313.7409 (273)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 501.7441 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 495.3372 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 488.9302 ] }
+    , { operator = Tj, parameters = [ Text "SAP 2012 EPC IMPROVEMENTS (Version 9.94, August 2019)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 482.5232 ] }
+    , { operator = Tj, parameters = [ Text "-------------------------------------------------------------------------------------------------------------------------------------------------------------" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 476.1162 ] }
+    , { operator = Tj, parameters = [ Text "Current energy efficiency rating:                                       D 60" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 469.7092 ] }
+    , { operator = Tj, parameters = [ Text "Current environmental impact rating:                                    E 54" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 463.3022 ] }
+    , { operator = Tj, parameters = [ Text "(For testing purposes):" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 456.8953 ] }
+    , { operator = Tj, parameters = [ Text "A  Loft insulation                                                         Existing unknown" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 450.4883 ] }
+    , { operator = Tj, parameters = [ Text "A2 Flat roof insulation                                                    Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 444.0813 ] }
+    , { operator = Tj, parameters = [ Text "A3 Room-in-roof insulation                                                 Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 437.6743 ] }
+    , { operator = Tj, parameters = [ Text "B  Cavity wall insulation                                                  Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 431.2673 ] }
+    , { operator = Tj, parameters = [ Text "B4 Party wall insulation                                                   Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 424.8603 ] }
+    , { operator = Tj, parameters = [ Text "Q  Internal or external wall insulation                                    Recommended" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 418.4534 ] }
+    , { operator = Tj, parameters = [ Text "Q2 External and cavity wall insulation                                     Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 412.0464 ] }
+    , { operator = Tj, parameters = [ Text "W1 Floor insulation (suspended floor)                                      Recommended" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 405.6394 ] }
+    , { operator = Tj, parameters = [ Text "W2 Floor insulation (solid floor)                                          Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 399.2324 ] }
+    , { operator = Tj, parameters = [ Text "C  Hot water cylinder insulation                                           Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 392.8254 ] }
+    , { operator = Tj, parameters = [ Text "D  Draught proofing                                                        Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 386.4185 ] }
+    , { operator = Tj, parameters = [ Text "E  Low energy lighting                                                     SAP increase too small" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 380.0115 ] }
+    , { operator = Tj, parameters = [ Text "F  Cylinder thermostat                                                     Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 373.6045 ] }
+    , { operator = Tj, parameters = [ Text "G  Heating controls                                                        Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 367.1975 ] }
+    , { operator = Tj, parameters = [ Text "H  Heating controls                                                        Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 360.7905 ] }
+    , { operator = Tj, parameters = [ Text "J  Biomass boiler                                                          Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 354.3835 ] }
+    , { operator = Tj, parameters = [ Text "K  Biomass stove with boiler                                               Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 347.9766 ] }
+    , { operator = Tj, parameters = [ Text "J2 Biomass boiler (alternative)                                            Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 341.5696 ] }
+    , { operator = Tj, parameters = [ Text "Z1 Air or ground source heat pump (alternative)                            Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 335.1626 ] }
+    , { operator = Tj, parameters = [ Text "Z2 Air or ground source heat pump with underfloor heating (alternative)    Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 328.7556 ] }
+    , { operator = Tj, parameters = [ Text "Z3 Micro CHP (alternative)                                                 Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 322.3486 ] }
+    , { operator = Tj, parameters = [ Text "I  Condensing boiler                                                       Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 315.9416 ] }
+    , { operator = Tj, parameters = [ Text "R  Condensing oil boiler                                                   Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 309.5347 ] }
+    , { operator = Tj, parameters = [ Text "S  Condensing boiler                                                       Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 303.1277 ] }
+    , { operator = Tj, parameters = [ Text "T  Gas condensing boiler                                                   Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 296.7207 ] }
+    , { operator = Tj, parameters = [ Text "T2 Flue gas heat recovery                                                  Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 290.3137 ] }
+    , { operator = Tj, parameters = [ Text "L2 High heat retention storage heaters                                     Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 283.9067 ] }
+    , { operator = Tj, parameters = [ Text "M  Replacement warm air unit                                               Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 277.4997 ] }
+    , { operator = Tj, parameters = [ Text "N  Solar water heating                                                     Recommended" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 271.0928 ] }
+    , { operator = Tj, parameters = [ Text "Y  Heat recovery system for mixer showers                                  Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 264.6858 ] }
+    , { operator = Tj, parameters = [ Text "O  Double glazed windows                                                   Already installed" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 258.2788 ] }
+    , { operator = Tj, parameters = [ Text "O3 Replacement glazing units                                               Unsuitable glazing" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 251.8718 ] }
+    , { operator = Tj, parameters = [ Text "P  Secondary glazing                                                       Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 245.4648 ] }
+    , { operator = Tj, parameters = [ Text "X  High performance external doors                                         SAP increase too small" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 239.0579 ] }
+    , { operator = Tj, parameters = [ Text "U  Solar photovoltaic panels                                               Recommended" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 232.6509 ] }
+    , { operator = Tj, parameters = [ Text "V2 Wind turbine                                                            Not applicable" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 226.2439 ] }
+    , { operator = Tj, parameters = [ Text "Recommended measures:                     SAP change   Cost change     CO2 change" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 219.8369 ] }
+    , { operator = Tj, parameters = [ Text "Q  Internal or external wall insulation    + 7.4        -£ 418          -883 kg (23.0%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 213.4299 ] }
+    , { operator = Tj, parameters = [ Text "W1 Floor insulation (suspended floor)      + 1.7        -£  95          -200 kg (6.8%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 207.0229 ] }
+    , { operator = Tj, parameters = [ Text "N  Solar water heating                     + 1.9        -£ 110          -245 kg (8.9%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 200.616 ] }
+    , { operator = Tj, parameters = [ Text "U  Solar photovoltaic panels               + 11.7       -£ 675          -954 kg (37.9%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 194.209 ] }
+    , { operator = Tj, parameters = [ Text "Measures omitted - SAP change or cost saving too small:" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 187.802 ] }
+    , { operator = Tj, parameters = [ Text "E  Low energy lighting                     + 0.2        -£  11          -15 kg (0.5%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 181.395 ] }
+    , { operator = Tj, parameters = [ Text "X  High performance external doors         + 0.5        -£  26          -56 kg (2.2%)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 174.988 ] }
+    , { operator = Tj, parameters = [ Text "                                                                      Energy  Environmental" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 168.581 ] }
+    , { operator = Tj, parameters = [ Text "                                         Typical annual savings       efficiency  impact" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 162.1741 ] }
+    , { operator = Tj, parameters = [ Text "Recommended measures" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 155.7671 ] }
+    , { operator = Tj, parameters = [ Text "Internal or external wall insulation      £418            12.72 kg/m" ] }
+    , { operator = Ts, parameters = [ PdfFloat 1.1017 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 4.125 ] }
+    , { operator = Tj, parameters = [ Text "2" ] }
+    , { operator = Ts, parameters = [ PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Tj, parameters = [ Text "  D 67     D 64     green" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 149.3601 ] }
+    , { operator = Tj, parameters = [ Text "Floor insulation (suspended floor)        £ 95             2.88 kg/m" ] }
+    , { operator = Ts, parameters = [ PdfFloat 1.1017 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 4.125 ] }
+    , { operator = Tj, parameters = [ Text "2" ] }
+    , { operator = Ts, parameters = [ PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Tj, parameters = [ Text "  C 69     D 67     green" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 142.9531 ] }
+    , { operator = Tj, parameters = [ Text "Solar water heating                       £110             3.52 kg/m" ] }
+    , { operator = Ts, parameters = [ PdfFloat 1.1017 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 4.125 ] }
+    , { operator = Tj, parameters = [ Text "2" ] }
+    , { operator = Ts, parameters = [ PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Tj, parameters = [ Text "  C 71     C 70     orange" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 136.5461 ] }
+    , { operator = Tj, parameters = [ Text "Solar photovoltaic panels                 £675            13.73 kg/m" ] }
+    , { operator = Ts, parameters = [ PdfFloat 1.1017 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 4.125 ] }
+    , { operator = Tj, parameters = [ Text "2" ] }
+    , { operator = Ts, parameters = [ PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Tj, parameters = [ Text "  B 83     C 80     green" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 130.1392 ] }
+    , { operator = Tj, parameters = [ Text "                          Total Savings  £1298           32.85 kg/m" ] }
+    , { operator = Ts, parameters = [ PdfFloat 1.1017 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 4.125 ] }
+    , { operator = Tj, parameters = [ Text "2" ] }
+    , { operator = Ts, parameters = [ PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 123.7322 ] }
+    , { operator = Tj, parameters = [ Text "Potential energy efficiency rating:                                    B 83" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 117.3252 ] }
+    , { operator = Tj, parameters = [ Text "Potential environmental impact rating:                                          C 80" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 110.9182 ] }
+    , { operator = Tj, parameters = [ Text "Fuel prices for cost data on this page from database revision number 527 TEST (27 Sep 2023)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 104.5112 ] }
+    , { operator = Tj, parameters = [ Text "Recommendation texts and addenda revision number 6.1 (11 Jun 2019)" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 98.1042 ] }
+    , { operator = Tj, parameters = [ Text "Typical heating and lighting costs of this home (per year, Thames Valley):" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 91.6973 ] }
+    , { operator = Tj, parameters = [ Text "                                       Current        Potential      Saving" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 85.2903 ] }
+    , { operator = Tj, parameters = [ Text " Electricity                          £188         £207         -£18" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 78.8833 ] }
+    , { operator = Tj, parameters = [ Text " Mains gas                            £1798        £1157        £641" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 72.4763 ] }
+    , { operator = Tj, parameters = [ Text " Space heating                        £1555        £1047        £508" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 66.0693 ] }
+    , { operator = Tj, parameters = [ Text " Water heating                        £304         £189         £115" ] }
+    , { operator = ET, parameters = [] }
+    , { operator = BT, parameters = [] }
+    , { operator = Tr, parameters = [ PdfInt 0 ] }
+    , { operator = RgLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+    , { operator = Tf, parameters = [ Name "F1", PdfFloat 5.5 ] }
+    , { operator = Td, parameters = [ PdfInt 30, PdfFloat 59.6623 ] }
+    , { operator = Tj, parameters = [ Text " Lighting                             £128         £128         £0" ] }
+    , { operator = ET, parameters = [] }
+    ]
