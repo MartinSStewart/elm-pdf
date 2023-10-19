@@ -86,11 +86,11 @@ bytesToInt bytes =
         (BD.loop
             ( Bytes.width bytes, Array.empty )
             (\( remaining, array ) ->
-                if Debug.log "array23" remaining <= 0 then
+                if remaining <= 0 then
                     BD.Done array |> BD.succeed
 
                 else
-                    BD.unsignedInt8 |> BD.map (\int -> ( remaining - 1, Array.push int array |> Debug.log "array" ) |> BD.Loop)
+                    BD.unsignedInt8 |> BD.map (\int -> ( remaining - 1, Array.push int array ) |> BD.Loop)
             )
         )
         bytes
@@ -100,7 +100,7 @@ bytesToInt bytes =
 decoder : Bytes -> Int -> BD.Decoder Bytes
 decoder key width =
     BD.loop
-        { newBytes = BE.sequence [], i = 0, j = 0, s = initialize (bytesToInt key |> Debug.log "array2"), index = 0 }
+        { newBytes = BE.sequence [], i = 0, j = 0, s = initialize (bytesToInt key), index = 0 }
         (\{ newBytes, i, j, s, index } ->
             if index >= width then
                 BE.encode newBytes |> BD.Done |> BD.succeed

@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), defaultPassword, fromBytes, getRc4Key, topLevelObjectParser
+    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), decodeAscii, decryptStream, defaultPassword, emptyBytes, encodeAscii, fromBytes, getRc4Key, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -55,11 +55,12 @@ import Flate
 import Hex.Convert
 import Length exposing (Length, Meters)
 import List.Nonempty exposing (Nonempty(..))
-import MD5
+import Md5
 import Parser exposing ((|.), (|=), DeadEnd, Parser)
 import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
 import Quantity exposing (Quantity)
+import Rc4_2
 import Round
 import Set exposing (Set)
 import Vector2d exposing (Vector2d)
@@ -2190,41 +2191,54 @@ emptyBytes =
 
 getRc4Key : Int -> Bytes -> Bytes -> Bytes -> Bytes -> Bytes
 getRc4Key hashByteLength oEntry userAsciiPassword pEntry idEntry =
-    BE.sequence
-        [ BE.bytes userAsciiPassword
-        , sliceBytes
-            (Bytes.width userAsciiPassword)
-            (Bytes.width paddingBytes - Bytes.width userAsciiPassword)
-            paddingBytes
-            |> Maybe.withDefault emptyBytes
-            |> BE.bytes
-        , BE.bytes oEntry
-        , BE.bytes pEntry
-        , BE.bytes idEntry
-        ]
-        |> BE.encode
-        |> Hex.Convert.toString
-        |> MD5.hex
-        |> Hex.Convert.toBytes
-        |> Maybe.withDefault emptyBytes
+    let
+        initialHash : Bytes
+        initialHash =
+            BE.sequence
+                [ BE.bytes userAsciiPassword
+                , sliceBytes
+                    (Bytes.width userAsciiPassword)
+                    (Bytes.width paddingBytes - Bytes.width userAsciiPassword)
+                    paddingBytes
+                    |> Maybe.withDefault emptyBytes
+                    |> BE.bytes
+                , BE.bytes oEntry
+                , BE.bytes pEntry
+                , BE.bytes idEntry
+                ]
+                |> BE.encode
+    in
+    List.foldr
+        (\_ hash -> Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes)
+        initialHash
+        -- Hash 51 times
+        (List.range 1 51)
         |> sliceBytes 0 hashByteLength
         |> Maybe.withDefault emptyBytes
 
 
+decryptStream : Bytes -> IndirectReference_ -> Bytes -> Bytes
+decryptStream encryptionKey ref stream =
+    let
+        key : Bytes
+        key =
+            BE.sequence
+                [ BE.bytes encryptionKey
+                , BE.unsignedInt16 LE ref.index
+                , BE.unsignedInt8 0
+                , BE.unsignedInt16 LE ref.revision
+                ]
+                |> BE.encode
+                |> Md5.fromBytes
+                |> Hex.Convert.toBytes
+                |> Maybe.withDefault emptyBytes
+                |> sliceBytes 0 10
+                |> Maybe.withDefault emptyBytes
 
---abc =
---    BE.sequence
---        [ BE.bytes globalHash
---        , BE.unsignedInt16 LE ref.index
---        , BE.unsignedInt8 0
---        , BE.unsignedInt16 LE ref.revision
---        ]
---        |> BE.encode
---        |> Hex.Convert.toString
---        |> MD5.hex
---        |> Hex.Convert.toBytes
---        |> Maybe.withDefault emptyBytes
---        |> sliceBytes 0 10
+        _ =
+            Debug.log "decryptKey" (Hex.Convert.toString key)
+    in
+    Rc4_2.decrypt key stream
 
 
 textParser : Parser Object

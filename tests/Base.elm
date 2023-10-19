@@ -1,7 +1,7 @@
 module Base exposing (tests)
 
 import Array
-import Bytes exposing (Bytes)
+import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as BD
 import Bytes.Encode as BE
 import Dict
@@ -158,6 +158,39 @@ tests =
                 in
                 Rc4.decrypt key plainText
                     |> Expect.equal "pedia"
+        , test "RC4 v2 decode" <|
+            \() ->
+                let
+                    encryptedData =
+                        List.map BE.unsignedInt8 [ 16, 33, 191, 4, 32 ]
+                            |> BE.sequence
+                            |> BE.encode
+                in
+                case Pdf.encodeAscii "Wiki" of
+                    Just key ->
+                        Rc4_2.decrypt key encryptedData
+                            |> Pdf.decodeAscii
+                            |> Expect.equal "pedia"
+
+                    Nothing ->
+                        Expect.fail "Invalid key"
+        , test "RC4 v2 decode 2" <|
+            \() ->
+                let
+                    encryptedData =
+                        "45A01F645FC35B383552544B9BF5"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+                in
+                case Pdf.encodeAscii "Secret" of
+                    Just key ->
+                        Rc4_2.decrypt key encryptedData
+                            |> Pdf.decodeAscii
+                            |> Expect.equal "Attack at dawn"
+
+                    Nothing ->
+                        Expect.fail "Invalid key"
         , test "Encrypted stream" <|
             \() ->
                 let
@@ -174,23 +207,32 @@ tests =
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
 
                     idEntry =
-                        "d19ade06181e7ee412ba31589d95c0bed19ade06181e7ee412ba31589d95c0be"
+                        "d19ade06181e7ee412ba31589d95c0be"
                             |> String.filter Char.isAlphaNum
                             |> Hex.Convert.toBytes
+                            |> Debug.log "idEntry"
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
 
                     pEntry =
-                        "2D 31 38 35 32"
-                            |> String.filter Char.isAlphaNum
-                            |> Hex.Convert.toBytes
-                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+                        BE.unsignedInt32 BE -1852
+                            |> BE.encode
 
                     key =
-                        Pdf.getRc4Key 128 ownerHash Pdf.defaultPassword pEntry idEntry
+                        Pdf.getRc4Key 16 ownerHash Pdf.defaultPassword pEntry idEntry
+
+                    decrypted =
+                        Pdf.decryptStream key { index = 8, revision = 0 } encryptedStream
+
+                    _ =
+                        Debug.log "decrypted" (Hex.Convert.toString decrypted)
                 in
-                Rc4_2.decrypt key encryptedStream
-                    |> Hex.Convert.toString
-                    |> Expect.equal ""
+                if Bytes.width encryptedStream == 340 then
+                    decrypted
+                        |> Flate.inflate
+                        |> Expect.equal (Just Pdf.emptyBytes)
+
+                else
+                    Expect.fail "Encrypted stream is the wrong length"
         ]
 
 
