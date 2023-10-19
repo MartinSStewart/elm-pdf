@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), decodeAscii, decryptStream, defaultPassword, emptyBytes, encodeAscii, fromBytes, getRc4Key, topLevelObjectParser
+    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), bytesToInts, decodeAscii, decryptStream, defaultPassword, emptyBytes, encodeAscii, fromBytes, getRc4Key, graphicsParser2, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -46,6 +46,7 @@ Custom fonts have to be embedded in the file in order to be used and this packag
 -}
 
 import Array exposing (Array)
+import Bitwise
 import BoundingBox2d exposing (BoundingBox2d)
 import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as BD
@@ -54,7 +55,6 @@ import Dict exposing (Dict)
 import Flate
 import Hex.Convert
 import Length exposing (Length, Meters)
-import List.Nonempty exposing (Nonempty(..))
 import Md5
 import Parser exposing ((|.), (|=), DeadEnd, Parser)
 import Pixels exposing (Pixels)
@@ -624,12 +624,12 @@ handleEncryption xRef sections0 =
                     case Parser.run (topLevelObjectParser Nothing section.bytes section.text) section.text of
                         Ok (PdfDict dict) ->
                             case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
-                                ( Just (PdfInt length), Just (Text pEntry), Just (Text ownerHash) ) ->
+                                ( Just (PdfInt length), Just (PdfInt pEntry), Just (Text ownerHash) ) ->
                                     getRc4Key
                                         (length // 8)
                                         (BE.string ownerHash |> BE.encode)
                                         defaultPassword
-                                        (BE.string pEntry |> BE.encode)
+                                        (BE.unsignedInt32 BE pEntry |> BE.encode)
                                         (Array.toList idData
                                             |> List.filterMap
                                                 (\a ->
@@ -1918,28 +1918,12 @@ streamParser maybeEncryption originalBytes originalText dict =
                 |. Parser.symbol "endobj"
 
 
-encodeAscii : String -> Maybe Bytes
+encodeAscii : String -> Bytes
 encodeAscii text2 =
-    if String.all (\char -> Char.toCode char < 256) text2 then
-        String.toList text2
-            |> List.map
-                (\char ->
-                    let
-                        charCode =
-                            Char.toCode char
-                    in
-                    if charCode < 256 then
-                        BE.unsignedInt8 charCode
-
-                    else
-                        BE.unsignedInt8 0
-                )
-            |> BE.sequence
-            |> BE.encode
-            |> Just
-
-    else
-        Nothing
+    String.toList text2
+        |> List.map (\char -> Char.toCode char |> Bitwise.and 0xFF |> BE.unsignedInt8)
+        |> BE.sequence
+        |> BE.encode
 
 
 decodeAscii : Bytes -> String
@@ -2195,26 +2179,58 @@ getRc4Key hashByteLength oEntry userAsciiPassword pEntry idEntry =
         initialHash : Bytes
         initialHash =
             BE.sequence
-                [ BE.bytes userAsciiPassword
-                , sliceBytes
-                    (Bytes.width userAsciiPassword)
-                    (Bytes.width paddingBytes - Bytes.width userAsciiPassword)
-                    paddingBytes
-                    |> Maybe.withDefault emptyBytes
-                    |> BE.bytes
+                [ BE.bytes paddingBytes
                 , BE.bytes oEntry
                 , BE.bytes pEntry
                 , BE.bytes idEntry
                 ]
                 |> BE.encode
+
+        _ =
+            Debug.log "2" (bytesToInts oEntry)
+
+        _ =
+            Debug.log "3" (bytesToInts pEntry)
+
+        _ =
+            Debug.log "4" (bytesToInts idEntry)
+
+        _ =
+            Debug.log "hashData" (bytesToInts initialHash)
     in
     List.foldr
-        (\_ hash -> Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes)
+        (\_ hash ->
+            let
+                a =
+                    Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes
+
+                _ =
+                    Debug.log "hashResult" (bytesToInts a)
+            in
+            a
+        )
         initialHash
         -- Hash 51 times
         (List.range 1 51)
         |> sliceBytes 0 hashByteLength
         |> Maybe.withDefault emptyBytes
+
+
+bytesToInts : Bytes -> Maybe (List Int)
+bytesToInts bytes =
+    BD.decode
+        (BD.loop
+            ( Bytes.width bytes, [] )
+            (\( remaining, list ) ->
+                if remaining <= 0 then
+                    List.reverse list |> BD.Done |> BD.succeed
+
+                else
+                    BD.unsignedInt8
+                        |> BD.map (\a -> ( remaining - 1, a :: list ) |> BD.Loop)
+            )
+        )
+        bytes
 
 
 decryptStream : Bytes -> IndirectReference_ -> Bytes -> Bytes
@@ -2224,19 +2240,16 @@ decryptStream encryptionKey ref stream =
         key =
             BE.sequence
                 [ BE.bytes encryptionKey
-                , BE.unsignedInt16 LE ref.index
-                , BE.unsignedInt8 0
-                , BE.unsignedInt16 LE ref.revision
+                , BE.unsignedInt8 (Bitwise.and 0xFF ref.index)
+                , BE.unsignedInt8 (Bitwise.and 0xFF (Bitwise.shiftRightBy 8 ref.index))
+                , BE.unsignedInt8 (Bitwise.and 0xFF (Bitwise.shiftRightBy 16 ref.index))
+                , BE.unsignedInt8 (Bitwise.and 0xFF ref.revision)
+                , BE.unsignedInt8 (Bitwise.and 0xFF (Bitwise.shiftRightBy 8 ref.revision))
                 ]
                 |> BE.encode
                 |> Md5.fromBytes
                 |> Hex.Convert.toBytes
                 |> Maybe.withDefault emptyBytes
-                |> sliceBytes 0 10
-                |> Maybe.withDefault emptyBytes
-
-        _ =
-            Debug.log "decryptKey" (Hex.Convert.toString key)
     in
     Rc4_2.decrypt key stream
 

@@ -166,14 +166,9 @@ tests =
                             |> BE.sequence
                             |> BE.encode
                 in
-                case Pdf.encodeAscii "Wiki" of
-                    Just key ->
-                        Rc4_2.decrypt key encryptedData
-                            |> Pdf.decodeAscii
-                            |> Expect.equal "pedia"
-
-                    Nothing ->
-                        Expect.fail "Invalid key"
+                Rc4_2.decrypt (Pdf.encodeAscii "Wiki") encryptedData
+                    |> Pdf.decodeAscii
+                    |> Expect.equal "pedia"
         , test "RC4 v2 decode 2" <|
             \() ->
                 let
@@ -183,19 +178,14 @@ tests =
                             |> Hex.Convert.toBytes
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
                 in
-                case Pdf.encodeAscii "Secret" of
-                    Just key ->
-                        Rc4_2.decrypt key encryptedData
-                            |> Pdf.decodeAscii
-                            |> Expect.equal "Attack at dawn"
-
-                    Nothing ->
-                        Expect.fail "Invalid key"
-        , test "Encrypted stream" <|
-            \() ->
-                let
+                Rc4_2.decrypt (Pdf.encodeAscii "Secret") encryptedData
+                    |> Pdf.decodeAscii
+                    |> Expect.equal "Attack at dawn"
+        , Test.only <|
+            describe "Decryption"
+                (let
                     ownerHash =
-                        "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 5C 69 A7"
+                        "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 69 A7"
                             |> String.filter Char.isAlphaNum
                             |> Hex.Convert.toBytes
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
@@ -210,35 +200,90 @@ tests =
                         "d19ade06181e7ee412ba31589d95c0be"
                             |> String.filter Char.isAlphaNum
                             |> Hex.Convert.toBytes
-                            |> Debug.log "idEntry"
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
 
                     pEntry =
-                        BE.unsignedInt32 BE -1852
-                            |> BE.encode
+                        [ BE.unsignedInt32 LE -1852 |> BE.encode
 
-                    key =
-                        Pdf.getRc4Key 16 ownerHash Pdf.defaultPassword pEntry idEntry
+                        --, BE.unsignedInt32 BE -1852 |> BE.encode
+                        ]
 
-                    decrypted =
-                        Pdf.decryptStream key { index = 8, revision = 0 } encryptedStream
+                    encryptedData =
+                        [ encryptedStream
+                        , encryptedStream2
+                        ]
+                 in
+                 if Bytes.width encryptedStream == 340 then
+                    List.indexedMap
+                        (\index pEntry2 -> testDecrypt index ownerHash pEntry2 idEntry encryptedStream2)
+                        pEntry
 
-                    _ =
-                        Debug.log "decrypted" (Hex.Convert.toString decrypted)
-                in
-                if Bytes.width encryptedStream == 340 then
-                    decrypted
-                        |> Flate.inflate
-                        |> Expect.equal (Just Pdf.emptyBytes)
-
-                else
-                    Expect.fail "Encrypted stream is the wrong length"
+                 else
+                    []
+                )
         ]
+
+
+testDecrypt index ownerHash pEntry idEntry encryptedData =
+    test ("Encrypted stream " ++ String.fromInt index) <|
+        \() ->
+            let
+                key =
+                    Pdf.getRc4Key 16
+                        ownerHash
+                        Pdf.defaultPassword
+                        pEntry
+                        idEntry
+
+                _ =
+                    Debug.log "key" (Pdf.bytesToInts key)
+
+                expected =
+                    [ 181
+                    , 108
+                    , 228
+                    , 153
+                    , 249
+                    , 103
+                    , 190
+                    , 196
+                    , 6
+                    , 227
+                    , 126
+                    , 73
+                    , 195
+                    , 85
+                    , 95
+                    , 167
+                    ]
+
+                decrypted =
+                    Pdf.decryptStream key { index = 8, revision = 0 } encryptedData
+
+                _ =
+                    Debug.log "decrypted" (Hex.Convert.toString decrypted)
+            in
+            case decrypted |> Flate.inflate of
+                Just inflated ->
+                    Pdf.decodeAscii inflated
+                        |> Parser.run Pdf.graphicsParser2
+                        |> Expect.ok
+
+                Nothing ->
+                    Expect.fail "Invalid flate data"
 
 
 encryptedStream : Bytes
 encryptedStream =
     "69 CE EE 60 AA EF AB 66 BB 44 F6 D0 48 4F E8 D7 9A 65 D8 9C 9A 1B 97 60 B1 DC C7 98 4E 53 73 3E 77 5C 8F 1D C0 10 B8 09 86 65 EF 1F 51 29 01 B3 C1 7E 4B 39 7A E0 F8 31 02 30 E9 EF 24 62 45 D5 06 01 81 9D 5F 1C A2 2B 06 2F F0 E7 A2 E6 E5 E5 37 01 4E 07 5D 9F 64 DC C7 7C 59 82 03 D4 11 3E 08 69 28 C1 E9 3E 75 F5 1A 25 43 F4 61 0E 3D A1 67 69 E2 FF AC 37 1A B9 23 9E 59 80 F3 1B C5 B7 E6 35 CA 2F C9 E9 BB D9 3A 56 90 5A 4B EE 0C 7C 0D 0B 3F 8C 79 75 0C D1 A6 4A A4 44 7A 0E 52 30 8B AB 38 41 E8 5F CA B6 87 B1 B9 0F 97 71 AC 6D 22 BC C0 A0 2D CF 08 A6 4B B4 CA 2E 9F 73 F9 C2 1E F2 5C 45 52 63 F9 90 BE 51 04 65 A1 8C 7A 4A 93 81 82 B5 CD D0 46 7C 27 C7 81 4E B8 A3 10 AC 5C 09 35 EF DE 64 73 35 C3 27 E6 E0 45 83 ED 2C D6 42 98 32 F0 95 E7 9B 53 ED 2C F9 46 C5 8B 90 D5 0B 22 C4 6F DB 6F 84 CC 13 E4 80 41 59 44 FB D0 B4 E0 98 F9 70 77 4B 8D AB F9 AF 08 75 41 40 86 DF 0F C8 27 C5 52 74 B7 83 D4 F6 CC AF 33 25 97 6D 1D CE 4E 05 F1 A0 FD 07 E8 B4 C1 A1 C9 82 C0 6F 9D D5 BB 75 8B FA A6 4C 45 AF 01 7D C8 A2 F6 42 F9 D7"
+        |> String.filter Char.isAlphaNum
+        |> Hex.Convert.toBytes
+        |> Maybe.withDefault (BE.encode (BE.sequence []))
+
+
+encryptedStream2 : Bytes
+encryptedStream2 =
+    "E6 45 9B C6 26 BD 89 86 6F 7E 1D 9A B5 11 C2 49 1C F5 CD F9 65 FD C6 D5 E4 4D C6 CE F6 0C 35 98 04 1F 5A E8 51 0C B2 D4 24 85 40 BF 56 1F 23 2B 1A C0 ED F2 BA 88 BF 4B 65 F7 49 AD A3 EE 14 E6 E6 35 F5 82 1B 41 D1 D5 45 29 8F 65 1C F9 ED 71 3E FF 76 9D 11 1E 49 D8 FB DC 88 43 61 B2 44 12 40 F4 75 53 5D E2 F2 8C FE F8 BA D7 83 5C 13 55 C2 0E 4B C8 E7 DE 7A A1 1E 44 FA E1 3D E3 05 93 EB 7F 76 69 03 8E 39 6D D0 E7 DB CD 69 D9 17 FF E4 87 18 B2 C8 B0 F4 44 C8 F4 A6 10 25 41 78 26 49 D2 16 37 B2 9B 6A 64 77 F3 B6 92 92 9B DE CE 39 B1 4E C8 A5 34 A7 69 5B DF 38 E7 34 16 5C 29 A2 CA EA F4 22 26 19 08 9A 84 5F 6D C7 23 30 F8 5E 40 1B F9 8B F4 1E EF 99 57 F7 2F 36 C7 39 FC 91 2E B1 73 FA DF 37 D4 D5 1E 11 F2 B9 39 43 9E B6 B9 80 D2 4C DA 70 85 39 E1 8C E0 A3 76 14 01 1A F5 89 78 FC 67 72 93 EC D3 58 A1 1A EB 9B D6 72 2F B2 25 11 8D 6A EC 06 79 38 34 A3 75 E2 60 F3 BB 86 7D 8B 77 68 40 82 D2 F8 DC 0A E4 AB CE 2D D9 F2 78 F4 18 1E 04 D9 C1 14 A9 9C 37 16 F1 41 DA 4B 70 5F 0F 06 31 91 D1 A6 1D F2 F1 FF 2D A6 11 CF 4A D5 BB 6E C7 D9 13 4C A5 35 92 B3 56 E8 24 C4 1F C9 19 B6 1A 2C 47 33 76 CC A7 0D 07 E8 B8 02 F5 4D 37 15 F4 CE 32 14 53 F3 15"
         |> String.filter Char.isAlphaNum
         |> Hex.Convert.toBytes
         |> Maybe.withDefault (BE.encode (BE.sequence []))
