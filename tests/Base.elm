@@ -182,32 +182,25 @@ tests =
                 Rc4_2.decrypt (Pdf.encodeAscii "Secret") encryptedData
                     |> Pdf.decodeAscii
                     |> Expect.equal "Attack at dawn"
-        , Test.only <|
-            describe "Decryption"
-                (let
-                    ownerHash =
-                        "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 69 A7"
-                            |> String.filter Char.isAlphaNum
-                            |> Hex.Convert.toBytes
-                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+        , describe "Decryption"
+            (let
+                ownerHash =
+                    "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 69 A7"
+                        |> String.filter Char.isAlphaNum
+                        |> Hex.Convert.toBytes
+                        |> Maybe.withDefault (BE.encode (BE.sequence []))
 
-                    userHash =
-                        "98 06 D8 E0 96 5D 80 2D F1 AF 6B 68 B8 D7 B8 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
-                            |> String.filter Char.isAlphaNum
-                            |> Hex.Convert.toBytes
-                            |> Maybe.withDefault (BE.encode (BE.sequence []))
+                idEntry =
+                    "d19ade06181e7ee412ba31589d95c0be"
+                        |> String.filter Char.isAlphaNum
+                        |> Hex.Convert.toBytes
+                        |> Maybe.withDefault (BE.encode (BE.sequence []))
 
-                    idEntry =
-                        "d19ade06181e7ee412ba31589d95c0be"
-                            |> String.filter Char.isAlphaNum
-                            |> Hex.Convert.toBytes
-                            |> Maybe.withDefault (BE.encode (BE.sequence []))
-
-                    pEntry =
-                        BE.unsignedInt32 LE -1852 |> BE.encode
-                 in
-                 [ testDecrypt 0 ownerHash pEntry idEntry ]
-                )
+                pEntry =
+                    BE.unsignedInt32 LE -1852 |> BE.encode
+             in
+             [ testDecrypt 0 ownerHash pEntry idEntry ]
+            )
         ]
 
 
@@ -237,36 +230,11 @@ testDecrypt index ownerHash pEntry idEntry =
                     , 167
                     ]
 
-                expectedObjectkey =
-                    [ 10
-                    , 45
-                    , 240
-                    , 38
-                    , 113
-                    , 198
-                    , 8
-                    , 16
-                    , 70
-                    , 92
-                    , 205
-                    , 235
-                    , 175
-                    , 225
-                    , 254
-                    , 144
-                    ]
-
                 decrypted =
                     Pdf.decryptStream key { index = encryptedStream3.index, revision = 0 } encryptedStream3.bytes
-
-                _ =
-                    Debug.log "decrypted" (Base64.fromBytes decrypted)
-
-                --_ =
-                --    Debug.log "decrypted" (Hex.Convert.toString decrypted)
             in
             if Just expectedKey == Pdf.bytesToInts key then
-                case Flate.inflate decrypted of
+                case Flate.inflateZlib decrypted of
                     Just inflated ->
                         Pdf.decodeAscii inflated
                             |> Parser.run Pdf.graphicsParser2
