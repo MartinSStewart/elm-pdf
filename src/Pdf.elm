@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), bytesToInts, decodeAscii, decryptStream, defaultPassword, emptyBytes, encodeAscii, fromBytes, getRc4Key, graphicsParser2, topLevelObjectParser
+    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), bytesToInts, decodeAscii, decryptStream, emptyBytes, encodeAscii, fromBytes, getRc4Key, graphicsParser2, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -490,7 +490,9 @@ decodeHeader =
 
 
 type alias DecodedPdf =
-    { metadata : Dict String Object, sections : List ( IndirectReference_, Result (List DeadEnd) Object ) }
+    { metadata : Dict String Object
+    , pages : List (Result (List DeadEnd) (List String))
+    }
 
 
 type alias PdfVersion =
@@ -504,7 +506,7 @@ getXRefOffset bytes =
             (\_ eofText ->
                 case String.indexes "startxref\n" eofText of
                     [ index ] ->
-                        case String.dropLeft index eofText |> String.trim |> String.split "\n" |> Debug.log "a" of
+                        case String.dropLeft index eofText |> String.trim |> String.split "\n" of
                             [ _, offsetText, "%%EOF" ] ->
                                 case String.toInt offsetText of
                                     Just int ->
@@ -582,20 +584,40 @@ fromBytes bytes =
 
                                 maybeEncryption =
                                     handleEncryption xRef sections0
-
-                                sections1 : List ( IndirectReference_, Result (List DeadEnd) Object )
-                                sections1 =
-                                    List.map
-                                        (\( ( index, revision ), section ) ->
-                                            ( { index = index, revision = revision }
-                                            , Parser.run
-                                                (topLevelObjectParser maybeEncryption section.bytes section.text)
-                                                section.text
-                                            )
-                                        )
-                                        (Dict.toList sections0)
                             in
-                            Ok { metadata = xRef.metadata, sections = sections1 }
+                            case Dict.get "Root" xRef.metadata of
+                                Just (IndirectReference ref) ->
+                                    case parseSection2 maybeEncryption ref sections0 of
+                                        Ok ( rootSection, _ ) ->
+                                            case Dict.get "Pages" rootSection of
+                                                Just (IndirectReference pagesRef) ->
+                                                    case parseSection2 maybeEncryption pagesRef sections0 of
+                                                        Ok ( pagesSection, _ ) ->
+                                                            case Dict.get "Kids" pagesSection of
+                                                                Just (PdfArray array) ->
+                                                                    { metadata = xRef.metadata
+                                                                    , pages =
+                                                                        Array.map
+                                                                            (getPageContents maybeEncryption sections0)
+                                                                            array
+                                                                            |> Array.toList
+                                                                    }
+                                                                        |> Ok
+
+                                                                _ ->
+                                                                    Err "Missing page list"
+
+                                                        Err error ->
+                                                            Err "Failed to parse pages object"
+
+                                                _ ->
+                                                    Err "Missing pages reference"
+
+                                        Err error ->
+                                            Err "Failed to parse root object"
+
+                                _ ->
+                                    Err "Missing root reference"
 
                         Err _ ->
                             Err "Failed to decode xref"
@@ -607,9 +629,88 @@ fromBytes bytes =
             Err error
 
 
-defaultPassword : Bytes
-defaultPassword =
-    BE.unsignedInt8 32 |> BE.encode
+getPageContents : Maybe Bytes -> Dict ( Int, Int ) { bytes : Bytes, text : String } -> Object -> Result (List DeadEnd) (List String)
+getPageContents maybeEncryption sections refObject =
+    case refObject of
+        IndirectReference ref ->
+            case parseSection2 maybeEncryption ref sections of
+                Ok ( pageSection, _ ) ->
+                    case Dict.get "Contents" pageSection of
+                        Just (IndirectReference contentRef) ->
+                            case parseSection2 maybeEncryption contentRef sections of
+                                Ok ( _, Just (DrawingInstructions drawingInstructions) ) ->
+                                    List.concatMap
+                                        (\instruction ->
+                                            case ( instruction.operator, instruction.parameters ) of
+                                                ( Tj, [ Text text2 ] ) ->
+                                                    [ text2 ]
+
+                                                ( SingleQuote, [ Text text2 ] ) ->
+                                                    [ text2 ]
+
+                                                ( DoubleQuote, [ _, _, Text text2 ] ) ->
+                                                    [ text2 ]
+
+                                                ( TJ, variable ) ->
+                                                    List.filterMap
+                                                        (\a ->
+                                                            case a of
+                                                                Text text2 ->
+                                                                    Just text2
+
+                                                                _ ->
+                                                                    Nothing
+                                                        )
+                                                        variable
+
+                                                _ ->
+                                                    []
+                                        )
+                                        drawingInstructions
+                                        |> Ok
+
+                                Ok _ ->
+                                    Err []
+
+                                Err error ->
+                                    Err error
+
+                        _ ->
+                            Err []
+
+                Err error ->
+                    Err error
+
+        _ ->
+            Err []
+
+
+parseSection2 : Maybe Bytes -> IndirectReference_ -> Dict ( Int, Int ) { bytes : Bytes, text : String } -> Result (List DeadEnd) ( Dict String Object, Maybe StreamContent )
+parseSection2 maybeEncryption ref sections0 =
+    case Dict.get ( ref.index, ref.revision ) sections0 of
+        Just section ->
+            case parseSection maybeEncryption section of
+                Ok (PdfDict parsedSection) ->
+                    Ok ( parsedSection, Nothing )
+
+                Ok (Stream dict stream) ->
+                    Ok ( dict, Just stream )
+
+                Ok _ ->
+                    Err []
+
+                Err error ->
+                    Err error
+
+        Nothing ->
+            Err []
+
+
+parseSection : Maybe Bytes -> { bytes : Bytes, text : String } -> Result (List DeadEnd) Object
+parseSection maybeEncryption section =
+    Parser.run
+        (topLevelObjectParser maybeEncryption section.bytes section.text)
+        section.text
 
 
 handleEncryption :
@@ -628,7 +729,6 @@ handleEncryption xRef sections0 =
                                     getRc4Key
                                         (length // 8)
                                         (BE.string ownerHash |> BE.encode)
-                                        defaultPassword
                                         (BE.unsignedInt32 BE pEntry |> BE.encode)
                                         (Array.toList idData
                                             |> List.filterMap
@@ -1889,10 +1989,6 @@ streamParser maybeEncryption originalBytes originalText dict =
                                                         Parser.succeed (Just ok)
 
                                                     Err error ->
-                                                        let
-                                                            _ =
-                                                                Debug.log "stream error" error
-                                                        in
                                                         Parser.problem "Stream parsing failed"
 
                                             Nothing ->
@@ -2173,8 +2269,8 @@ emptyBytes =
     BE.sequence [] |> BE.encode
 
 
-getRc4Key : Int -> Bytes -> Bytes -> Bytes -> Bytes -> Bytes
-getRc4Key hashByteLength oEntry userAsciiPassword pEntry idEntry =
+getRc4Key : Int -> Bytes -> Bytes -> Bytes -> Bytes
+getRc4Key hashByteLength oEntry pEntry idEntry =
     let
         initialHash : Bytes
         initialHash =
@@ -2185,30 +2281,9 @@ getRc4Key hashByteLength oEntry userAsciiPassword pEntry idEntry =
                 , BE.bytes idEntry
                 ]
                 |> BE.encode
-
-        _ =
-            Debug.log "2" (bytesToInts oEntry)
-
-        _ =
-            Debug.log "3" (bytesToInts pEntry)
-
-        _ =
-            Debug.log "4" (bytesToInts idEntry)
-
-        _ =
-            Debug.log "hashData" (bytesToInts initialHash)
     in
     List.foldr
-        (\_ hash ->
-            let
-                a =
-                    Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes
-
-                _ =
-                    Debug.log "hashResult" (bytesToInts a)
-            in
-            a
-        )
+        (\_ hash -> Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes)
         initialHash
         -- Hash 51 times
         (List.range 1 51)
@@ -2247,11 +2322,14 @@ decryptStream encryptionKey ref stream =
                 , BE.unsignedInt8 (Bitwise.and 0xFF (Bitwise.shiftRightBy 8 ref.revision))
                 ]
                 |> BE.encode
+
+        key2 =
+            key
                 |> Md5.fromBytes
                 |> Hex.Convert.toBytes
                 |> Maybe.withDefault emptyBytes
     in
-    Rc4_2.decrypt key stream
+    Rc4_2.decrypt key2 stream
 
 
 textParser : Parser Object

@@ -1,6 +1,7 @@
 module Base exposing (tests)
 
 import Array
+import Base64
 import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as BD
 import Bytes.Encode as BE
@@ -203,42 +204,21 @@ tests =
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
 
                     pEntry =
-                        [ BE.unsignedInt32 LE -1852 |> BE.encode
-
-                        --, BE.unsignedInt32 BE -1852 |> BE.encode
-                        ]
-
-                    encryptedData =
-                        [ encryptedStream
-                        , encryptedStream2
-                        ]
+                        BE.unsignedInt32 LE -1852 |> BE.encode
                  in
-                 if Bytes.width encryptedStream == 340 then
-                    List.indexedMap
-                        (\index pEntry2 -> testDecrypt index ownerHash pEntry2 idEntry encryptedStream2)
-                        pEntry
-
-                 else
-                    []
+                 [ testDecrypt 0 ownerHash pEntry idEntry ]
                 )
         ]
 
 
-testDecrypt index ownerHash pEntry idEntry encryptedData =
+testDecrypt index ownerHash pEntry idEntry =
     test ("Encrypted stream " ++ String.fromInt index) <|
         \() ->
             let
                 key =
-                    Pdf.getRc4Key 16
-                        ownerHash
-                        Pdf.defaultPassword
-                        pEntry
-                        idEntry
+                    Pdf.getRc4Key 16 ownerHash pEntry idEntry
 
-                _ =
-                    Debug.log "key" (Pdf.bytesToInts key)
-
-                expected =
+                expectedKey =
                     [ 181
                     , 108
                     , 228
@@ -257,36 +237,56 @@ testDecrypt index ownerHash pEntry idEntry encryptedData =
                     , 167
                     ]
 
+                expectedObjectkey =
+                    [ 10
+                    , 45
+                    , 240
+                    , 38
+                    , 113
+                    , 198
+                    , 8
+                    , 16
+                    , 70
+                    , 92
+                    , 205
+                    , 235
+                    , 175
+                    , 225
+                    , 254
+                    , 144
+                    ]
+
                 decrypted =
-                    Pdf.decryptStream key { index = 8, revision = 0 } encryptedData
+                    Pdf.decryptStream key { index = encryptedStream3.index, revision = 0 } encryptedStream3.bytes
 
                 _ =
-                    Debug.log "decrypted" (Hex.Convert.toString decrypted)
+                    Debug.log "decrypted" (Base64.fromBytes decrypted)
+
+                --_ =
+                --    Debug.log "decrypted" (Hex.Convert.toString decrypted)
             in
-            case decrypted |> Flate.inflate of
-                Just inflated ->
-                    Pdf.decodeAscii inflated
-                        |> Parser.run Pdf.graphicsParser2
-                        |> Expect.ok
+            if Just expectedKey == Pdf.bytesToInts key then
+                case Flate.inflate decrypted of
+                    Just inflated ->
+                        Pdf.decodeAscii inflated
+                            |> Parser.run Pdf.graphicsParser2
+                            |> Expect.ok
 
-                Nothing ->
-                    Expect.fail "Invalid flate data"
+                    Nothing ->
+                        Expect.fail "Invalid flate data"
 
-
-encryptedStream : Bytes
-encryptedStream =
-    "69 CE EE 60 AA EF AB 66 BB 44 F6 D0 48 4F E8 D7 9A 65 D8 9C 9A 1B 97 60 B1 DC C7 98 4E 53 73 3E 77 5C 8F 1D C0 10 B8 09 86 65 EF 1F 51 29 01 B3 C1 7E 4B 39 7A E0 F8 31 02 30 E9 EF 24 62 45 D5 06 01 81 9D 5F 1C A2 2B 06 2F F0 E7 A2 E6 E5 E5 37 01 4E 07 5D 9F 64 DC C7 7C 59 82 03 D4 11 3E 08 69 28 C1 E9 3E 75 F5 1A 25 43 F4 61 0E 3D A1 67 69 E2 FF AC 37 1A B9 23 9E 59 80 F3 1B C5 B7 E6 35 CA 2F C9 E9 BB D9 3A 56 90 5A 4B EE 0C 7C 0D 0B 3F 8C 79 75 0C D1 A6 4A A4 44 7A 0E 52 30 8B AB 38 41 E8 5F CA B6 87 B1 B9 0F 97 71 AC 6D 22 BC C0 A0 2D CF 08 A6 4B B4 CA 2E 9F 73 F9 C2 1E F2 5C 45 52 63 F9 90 BE 51 04 65 A1 8C 7A 4A 93 81 82 B5 CD D0 46 7C 27 C7 81 4E B8 A3 10 AC 5C 09 35 EF DE 64 73 35 C3 27 E6 E0 45 83 ED 2C D6 42 98 32 F0 95 E7 9B 53 ED 2C F9 46 C5 8B 90 D5 0B 22 C4 6F DB 6F 84 CC 13 E4 80 41 59 44 FB D0 B4 E0 98 F9 70 77 4B 8D AB F9 AF 08 75 41 40 86 DF 0F C8 27 C5 52 74 B7 83 D4 F6 CC AF 33 25 97 6D 1D CE 4E 05 F1 A0 FD 07 E8 B4 C1 A1 C9 82 C0 6F 9D D5 BB 75 8B FA A6 4C 45 AF 01 7D C8 A2 F6 42 F9 D7"
-        |> String.filter Char.isAlphaNum
-        |> Hex.Convert.toBytes
-        |> Maybe.withDefault (BE.encode (BE.sequence []))
+            else
+                Expect.fail "Invalid key"
 
 
-encryptedStream2 : Bytes
-encryptedStream2 =
-    "E6 45 9B C6 26 BD 89 86 6F 7E 1D 9A B5 11 C2 49 1C F5 CD F9 65 FD C6 D5 E4 4D C6 CE F6 0C 35 98 04 1F 5A E8 51 0C B2 D4 24 85 40 BF 56 1F 23 2B 1A C0 ED F2 BA 88 BF 4B 65 F7 49 AD A3 EE 14 E6 E6 35 F5 82 1B 41 D1 D5 45 29 8F 65 1C F9 ED 71 3E FF 76 9D 11 1E 49 D8 FB DC 88 43 61 B2 44 12 40 F4 75 53 5D E2 F2 8C FE F8 BA D7 83 5C 13 55 C2 0E 4B C8 E7 DE 7A A1 1E 44 FA E1 3D E3 05 93 EB 7F 76 69 03 8E 39 6D D0 E7 DB CD 69 D9 17 FF E4 87 18 B2 C8 B0 F4 44 C8 F4 A6 10 25 41 78 26 49 D2 16 37 B2 9B 6A 64 77 F3 B6 92 92 9B DE CE 39 B1 4E C8 A5 34 A7 69 5B DF 38 E7 34 16 5C 29 A2 CA EA F4 22 26 19 08 9A 84 5F 6D C7 23 30 F8 5E 40 1B F9 8B F4 1E EF 99 57 F7 2F 36 C7 39 FC 91 2E B1 73 FA DF 37 D4 D5 1E 11 F2 B9 39 43 9E B6 B9 80 D2 4C DA 70 85 39 E1 8C E0 A3 76 14 01 1A F5 89 78 FC 67 72 93 EC D3 58 A1 1A EB 9B D6 72 2F B2 25 11 8D 6A EC 06 79 38 34 A3 75 E2 60 F3 BB 86 7D 8B 77 68 40 82 D2 F8 DC 0A E4 AB CE 2D D9 F2 78 F4 18 1E 04 D9 C1 14 A9 9C 37 16 F1 41 DA 4B 70 5F 0F 06 31 91 D1 A6 1D F2 F1 FF 2D A6 11 CF 4A D5 BB 6E C7 D9 13 4C A5 35 92 B3 56 E8 24 C4 1F C9 19 B6 1A 2C 47 33 76 CC A7 0D 07 E8 B8 02 F5 4D 37 15 F4 CE 32 14 53 F3 15"
-        |> String.filter Char.isAlphaNum
-        |> Hex.Convert.toBytes
-        |> Maybe.withDefault (BE.encode (BE.sequence []))
+encryptedStream3 =
+    { index = 25
+    , bytes =
+        "01 A1 A0 F4 F8 88 3C E2 C1 D6 15 24 86 E0 58 20 E8 83 16 AC E4 8E 40 B4 85 46 70 CD B8 BF 50 98 A3 69 19 4B 70 96 DA FE 95 B0 E5 55 F5 B1 8E 95 98 09 2B 94 DE D1 87 5D 95 3D C3 4F B2 79 14 32 00 44 02 F3 2E EB 9D 0C 0B 64 E7 B5 53 A7 59 BA D8 11 42 1A 13 79 96 66 F1 64 0F B4 2F 72 2C 10 78 06 76 9D 98 17 E4 F8 94 90 11 28 1A 88 65 3C 40 2B 4A F2 95 06 95 C9 7F 1A 93 8B 91 B9 17 14 F6 18 F6 9C B6 ED 81 A9 09 74 0E D8 D4 26 1D 72 39 10 A7 C4 F7 1B 14 4B FD 07 C2 4C 3D 2C 53 2E C4 57 85 D1 85 54 4B 82 90 BD 67 62 41 7D D4 86 19 FE E7 EB 72 4F 91 B8 E9 40 FC 83 A9 43 F8 EC CA FF 72 1E 30 3E 2A 9A 46 A8 4B 73 23 DF 9E C0 BA 52 65 AE 5B 21 25 1D 27 FB 1E B7 53 66 D9 0E DC D3 09 38 8B 39 87 8E CD EB 72 AB 96 F7 31 9B 71 A3 18 C4 7E E4 B1 73 08 EE 36 E1 55 0D E2 F8 09 3A F9 D4 F9 85 6D 20 C4 50 6E A9 B8 C3 E2 2C 59 35 BA 75 29 30 20 33 EB 77 6D 76 67 31 A5 50 70 61 34 96 95 24 0A 05 10 B5 D2 AA 1E 2D 02 77 DB 3D A0 45 72 1D E2 50 97 00 81 8A C2 50 ED 7A D1 7F 2C 5E 6F 09 07 FE B2 7E 55 44 56 97 55 81 08 96 1E 3C 45 D5 97 5C 11 19 54 A0 25 1D 12 26 D0 F7 8C 26 78 8D F0 BD CE A8 E1 E4 79 68 23 66 4D E6 E8 4E EF C8 7B 21 76 FC 77 CC 2C 42 63 69 D3 FB 3F 68 F9 77 9A 81 AE 1B 6E B2 06 23 A2 39 A6 FC F8 DE 70 2C 3A E2 7D DA DA 13 A6 CE DD B1 0A CD 9C 57 25 00 12 1F A5 D1 40 C9 5A 78 2A F5 CA 5E 05 BB 12 3B 62 E4 11 4F 4C EC 82 6F E6 E8 40 46 34 F1 BD 6A DC D0 5B A2 20 99 EC 98 2D CD D5 70 F9 7D A8 2F 1B EB 0C BC 49 E7 6E 74 72 A5 23 50 18 B3 FE C9 9E A6 8D 66 65 60 AA 68 38 C4 B4 5D 90 0B E4 35 BC 98 5B A9 B3 5E 37 9E 37 7B CB 2E EF 3A F2 80 9F F4 7B 8F B6 77 CE 7E 0F D6 5A E3 F2 1E 89 12 4C BC 2B E2 9F AB 7E DD AA 0B 71 55 EB 3E 35 6D F4 BC 05 FC D0 88 B7 EC A4 D0 D1 C1 6C 61 51 55 17 8B 5A C2 C8 01 88 C7 A3 BE F6 F0 DC 27 6C 85 D4 84 B1 F8 45 22 F1 F4 C4 C0 C1 9D 43 C9 29 A6 CB 0B ED 76 3C BA BD 30 1F 41 13 13 B0 CA B3 2E 9D 87 56 7A BF 35 C1 24 27 6D EA 31 05 28 68 32 3E 40 3D D9 BC 01 74 A6 73 CB 0A 51 25 9F E2 EE B3 83 F8 A3 4D 82 8F C5 B2 B6 63 5F 3F E1 E8 C6 2D C5 A0 4F CC F9 AE D6 57 C6 21 E5 02 AB 99 8A 2A 30 1C C7 60 25 DF 13 22 60 FC D3 DF 00 77 F8 95 9D CE E0 C0 78 77 4C C2 03 D7 E3 D9 D2 95 3F 92 37 AB 31 EB F8 F5 AB C3 32 99 A0 F0 57 47 10 90 5B 28 C6 74 E1 24 54 75 19 39 81 7B F2 E2 00 2D E1 EC B6 89 9E 46 54 D4 B3 18 ED 1B 1C F0 6C 64 32 E8 76 EA 08 24 FF 72 56 69 9C 67 CF BE 40 FD 5C 19 AE DD E0 1D CE B2 B3 A4 42 5E 03 9B 34 E4 B8 74 34 C7 1A 19 92 23 6E 9F E2 EF 5B 66 FD 5C 36 57 2D 81 C4 DF 92 1F 74 80 7A 1B 65 F4 46 73 6A D5 49 A9 75 68 C2 DB 5E 8F EE 78 6F 9D BC 23 B2 6D 1D A3 9E 21 3C 17 19 33 08 05 E8 01 99 0E 12 81 EB 6A 1E FC 67 E4 91 95 D3 91 0C 70 F6 31 06 F1 D6 EC 9D 34 38 66 58 26 01 B5 EF 1E F8 AD 98 FC 08 4F 27 17 A2 D7 50 CB D7 E0 36 AF 81 83 A6 2B 4D B9 AB 55 A1 68 C8 CB 5F B1 81 60 81 7D C5 F3 E7 98 D8 D3 AB 67 DF 0A A1 0C 6B B9 4A 32 BC 07 8A F4 DC 3C C0 84 E7 7C C5 ED F9 A7 54 72 54 F3 3D 4E 0E BC 3C 41 E9 14 DA 9D 95 83 77 BA AB BD BD 2F FF BA BB D9 13 50 ED 31 88 B7 70 80 E4 FF C8 FB AD 62 B5 59 38 A2 74 9A 00 D4 0C 76 C3 95 A0 E0 7E 52 06 BA 27 A5 B3 98 95 DA 17 9A 59 9A 1E D4 40 64 52 1C 86 DB F9 E3 2C 68 15 0E A1 3B EA D5 C7 5B 02 09 C5 7F F1 33 92 54 A6 34 B2 56 CA 2A 27 0F BA 74 88 BC 20 43 D7 2C 55 A1 35 C1 77 C3 5C 54 36 52 8D CD 70 57 9C A2 76 4B C8 F8 5E 18 90 4A 2D B0 74 5C 3C AF 58 BA 61 E0 BB FC 58 13 57 53 FE 37 66 3E 0B 29 3A B7 33 EF 74 30 EB EF 9F C0 83 38 06 9F 37 DF 0B E9 0B CD 10 9A 09 B9 E2 B0 4F 9D A0 11 53 78 7E DA 91 5C 22 51 6E 60 B4 4E 32 60 37 3C BA 1C 57 4F 63 E5 84 A8 24 D0 F1 CB 58 D3 9E 6B 60 DB 82 86 0D 16 8D EC 92 EE F0 FB 6F FD 2A 17 EA 5A 97 F2 9E 48 29 8F 2F 19 47 AF 11 B7 13 C8 72 C6 07 2D DC D2 7B A6 18 64 D1 A5 51 BF 64 11 71 C4 B5 13 7D 96 59 29 95 AD C9 93 F2 AD 20 39 66 6E E1 84 C2 D8 24 64 01 97 5E 1E 27 22 81 7F 2D 71 BB 99 E3 F4 90 1F 97 D7 63 96 B4 08 E6 9D 1C 03 95 26 54 88 72 C2 A8 DB 1A D7 21 50 F2 0C 9C 27 0B 6C 54 FD C3 DA CA 7E 4A 70 03 7E D8 3E 8F B1 45 3B 72 FC 79 61 20 8E 03 A4 40 DA 21 BC F5 22 5A 11 56 99 65 BB 0E 9E 9E 2C 49 7A BA 07 FF 43 93 A7 E8 70 DC B4 26 B8 3F 44 F4 BC 05 1D DD F2 8C C2 9A 2E 6D A6 31 F5 99 A5 FE B6 B8 85 03 94 73 48 ED B3 FA 30 FD 92 D3 73 B7"
+            |> String.filter Char.isAlphaNum
+            |> Hex.Convert.toBytes
+            |> Maybe.withDefault (BE.encode (BE.sequence []))
+    }
 
 
 exampleTopLevelObject : Bytes
