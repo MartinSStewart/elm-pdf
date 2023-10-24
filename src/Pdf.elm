@@ -504,11 +504,11 @@ getXRefOffset bytes =
     BD.decode
         (BD.map2
             (\_ eofText ->
-                case String.indexes "startxref\n" eofText of
+                case String.indexes "startxref" eofText of
                     [ index ] ->
                         case String.dropLeft index eofText |> String.trim |> String.split "\n" of
-                            [ _, offsetText, "%%EOF" ] ->
-                                case String.toInt offsetText of
+                            [ _, offsetText, _ ] ->
+                                case String.toInt (String.trim offsetText) of
                                     Just int ->
                                         Ok int
 
@@ -636,8 +636,8 @@ getPageContents maybeEncryption sections refObject =
         IndirectReference ref ->
             case parseSection2 maybeEncryption ref sections of
                 Ok ( pageSection, _ ) ->
-                    case Dict.get "Contents" pageSection of
-                        Just (IndirectReference contentRef) ->
+                    case ( Dict.get "Contents" pageSection, Dict.get "Resources" pageSection ) of
+                        ( Just (IndirectReference contentRef), Just (PdfDict resources) ) ->
                             case parseSection2 maybeEncryption contentRef sections of
                                 Ok ( _, Just (DrawingInstructions drawingInstructions) ) ->
                                     List.concatMap
@@ -646,10 +646,19 @@ getPageContents maybeEncryption sections refObject =
                                                 ( Tj, [ Text text2 ] ) ->
                                                     [ text2 ]
 
+                                                ( Tj, [ HexString text2 ] ) ->
+                                                    [ text2 ]
+
                                                 ( SingleQuote, [ Text text2 ] ) ->
                                                     [ text2 ]
 
+                                                ( SingleQuote, [ HexString text2 ] ) ->
+                                                    [ text2 ]
+
                                                 ( DoubleQuote, [ _, _, Text text2 ] ) ->
+                                                    [ text2 ]
+
+                                                ( DoubleQuote, [ _, _, HexString text2 ] ) ->
                                                     [ text2 ]
 
                                                 ( TJ, variable ) ->
@@ -657,6 +666,9 @@ getPageContents maybeEncryption sections refObject =
                                                         (\a ->
                                                             case a of
                                                                 Text text2 ->
+                                                                    Just text2
+
+                                                                HexString text2 ->
                                                                     Just text2
 
                                                                 _ ->
@@ -1991,7 +2003,11 @@ streamParser maybeEncryption originalBytes originalText dict =
             case Dict.get "Length" dict of
                 Just (PdfInt length) ->
                     Parser.succeed identity
-                        |. Parser.symbol "stream\n"
+                        |. Parser.symbol "stream"
+                        |. Parser.oneOf
+                            [ Parser.symbol "\n"
+                            , Parser.symbol "\u{000D}\n"
+                            ]
                         |= Parser.getPosition
                         |> Parser.andThen
                             (\( row, column ) ->
@@ -2030,7 +2046,7 @@ streamParser maybeEncryption originalBytes originalText dict =
                 (\bytes ->
                     case Flate.inflateZlib bytes of
                         Just inflated ->
-                            case Parser.run graphicsParser2 (decodeAscii inflated) of
+                            case Parser.run graphicsParser2 (decodeAscii inflated |> Debug.log "flate") of
                                 Ok ok ->
                                     Parser.succeed (Just ok)
 
