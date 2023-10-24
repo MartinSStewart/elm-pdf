@@ -42,7 +42,7 @@ view { output } =
                         []
                         [ Html.div [] [ Html.text (Debug.toString ok.metadata) ]
                         , Html.br [] []
-                        , List.map (\result -> Html.div [] [ Debug.toString result |> Html.text ]) ok.sections
+                        , List.map (\result -> Html.div [] [ Debug.toString result |> Html.text ]) ok.pages
                             |> List.intersperse (Html.br [] [])
                             |> Html.div []
                         ]

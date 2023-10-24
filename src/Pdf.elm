@@ -571,7 +571,7 @@ fromBytes bytes =
                                                                     { bytes = endSection, text = endSectionText }
                                                                     state.sections
 
-                                                            Err _ ->
+                                                            Err error ->
                                                                 state.sections
 
                                                     Nothing ->
@@ -579,9 +579,10 @@ fromBytes bytes =
                                             }
                                         )
                                         { next = xRefOffset, sections = Dict.empty }
-                                        xRef.references
+                                        (List.sort xRef.references)
                                         |> .sections
 
+                                maybeEncryption : Maybe Bytes
                                 maybeEncryption =
                                     handleEncryption xRef sections0
                             in
@@ -619,8 +620,8 @@ fromBytes bytes =
                                 _ ->
                                     Err "Missing root reference"
 
-                        Err _ ->
-                            Err "Failed to decode xref"
+                        Err error ->
+                            Err "Failed to decode xref 2"
 
                 Nothing ->
                     Err "Failed to decode xref"
@@ -670,22 +671,41 @@ getPageContents maybeEncryption sections refObject =
                                         |> Ok
 
                                 Ok _ ->
-                                    Err []
+                                    Err
+                                        [ { row = 0
+                                          , col = 0
+                                          , problem = Parser.Expecting "1"
+                                          }
+                                        ]
 
                                 Err error ->
                                     Err error
 
                         _ ->
-                            Err []
+                            Err
+                                [ { row = 0
+                                  , col = 0
+                                  , problem = Parser.Expecting "2"
+                                  }
+                                ]
 
                 Err error ->
                     Err error
 
         _ ->
-            Err []
+            Err
+                [ { row = 0
+                  , col = 0
+                  , problem = Parser.Expecting "3"
+                  }
+                ]
 
 
-parseSection2 : Maybe Bytes -> IndirectReference_ -> Dict ( Int, Int ) { bytes : Bytes, text : String } -> Result (List DeadEnd) ( Dict String Object, Maybe StreamContent )
+parseSection2 :
+    Maybe Bytes
+    -> IndirectReference_
+    -> Dict ( Int, Int ) { bytes : Bytes, text : String }
+    -> Result (List DeadEnd) ( Dict String Object, Maybe StreamContent )
 parseSection2 maybeEncryption ref sections0 =
     case Dict.get ( ref.index, ref.revision ) sections0 of
         Just section ->
@@ -697,13 +717,23 @@ parseSection2 maybeEncryption ref sections0 =
                     Ok ( dict, Just stream )
 
                 Ok _ ->
-                    Err []
+                    Err
+                        [ { row = 0
+                          , col = 0
+                          , problem = Parser.Expecting "4"
+                          }
+                        ]
 
                 Err error ->
                     Err error
 
         Nothing ->
-            Err []
+            Err
+                [ { row = ref.index
+                  , col = ref.revision
+                  , problem = Parser.Expecting "5"
+                  }
+                ]
 
 
 parseSection : Maybe Bytes -> { bytes : Bytes, text : String } -> Result (List DeadEnd) Object
@@ -720,39 +750,27 @@ handleEncryption :
 handleEncryption xRef sections0 =
     case ( Dict.get "Encrypt" xRef.metadata, Dict.get "ID" xRef.metadata ) of
         ( Just (IndirectReference ref), Just (PdfArray idData) ) ->
-            case Dict.get ( ref.index, ref.revision ) sections0 of
-                Just section ->
-                    case Parser.run (topLevelObjectParser Nothing section.bytes section.text) section.text of
-                        Ok (PdfDict dict) ->
-                            case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
-                                ( Just (PdfInt length), Just (PdfInt pEntry), Just (Text ownerHash) ) ->
-                                    getRc4Key
-                                        (length // 8)
-                                        (BE.string ownerHash |> BE.encode)
-                                        (BE.unsignedInt32 BE pEntry |> BE.encode)
-                                        (Array.toList idData
-                                            |> List.filterMap
-                                                (\a ->
-                                                    case a of
-                                                        HexString hex ->
-                                                            Just hex
+            case parseSection2 Nothing ref sections0 of
+                Ok ( dict, _ ) ->
+                    case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
+                        ( Just (PdfInt length), Just (PdfInt pEntry), Just (Text ownerHash) ) ->
+                            getRc4Key
+                                (length // 8)
+                                (encodeAscii ownerHash)
+                                (BE.unsignedInt32 LE pEntry |> BE.encode)
+                                (case Array.get 0 idData of
+                                    Just (HexString hex) ->
+                                        Hex.Convert.toBytes hex |> Maybe.withDefault emptyBytes
 
-                                                        _ ->
-                                                            Nothing
-                                                )
-                                            |> String.concat
-                                            |> Hex.Convert.toBytes
-                                            |> Maybe.withDefault emptyBytes
-                                        )
-                                        |> Just
+                                    _ ->
+                                        emptyBytes
+                                )
+                                |> Just
 
-                                _ ->
-                                    Nothing
-
-                        result ->
+                        _ ->
                             Nothing
 
-                Nothing ->
+                _ ->
                     Nothing
 
         _ ->
@@ -1373,6 +1391,7 @@ type Object
     | HexString String
     | Stream (Dict String Object) StreamContent
     | IndirectReference IndirectReference_
+    | PdfBool Bool
 
 
 encodeObject : Object -> BE.Encoder
@@ -1444,6 +1463,13 @@ encodeObject object =
 
         IndirectReference { index, revision } ->
             String.fromInt index ++ " " ++ String.fromInt revision ++ " R" |> BE.string
+
+        PdfBool bool ->
+            if bool then
+                BE.string "true"
+
+            else
+                BE.string "false"
 
 
 encodeGraphicsInstructions : List GraphicsInstruction -> BE.Encoder
@@ -1959,59 +1985,75 @@ streamParser :
     -> Dict String Object
     -> Parser (Maybe (List GraphicsInstruction))
 streamParser maybeEncryption originalBytes originalText dict =
-    case Dict.get "Length" dict of
-        Just (PdfInt length) ->
-            Parser.succeed identity
-                |. Parser.symbol "stream\n"
-                |= Parser.getPosition
-                |> Parser.andThen
-                    (\( row, column ) ->
-                        let
-                            offset : Int
-                            offset =
-                                String.split "\n" originalText
-                                    |> List.take (row - 1)
-                                    |> List.map (\text2 -> String.length text2 + 1)
-                                    |> List.sum
-                                    |> (+) (column - 1)
-                        in
-                        case sliceBytes offset length originalBytes of
-                            Just bytes ->
-                                case Dict.get "Filter" dict of
-                                    Just (Name "Standard") ->
-                                        Parser.succeed Nothing
-
-                                    Just (Name "FlateDecode") ->
-                                        case Flate.inflateZlib bytes of
-                                            Just inflated ->
-                                                case Parser.run graphicsParser2 (decodeAscii inflated) of
-                                                    Ok ok ->
-                                                        Parser.succeed (Just ok)
-
-                                                    Err error ->
-                                                        Parser.problem "Stream parsing failed"
+    let
+        parserHelper : (Bytes -> Parser (Maybe a)) -> Parser (Maybe a)
+        parserHelper a =
+            case Dict.get "Length" dict of
+                Just (PdfInt length) ->
+                    Parser.succeed identity
+                        |. Parser.symbol "stream\n"
+                        |= Parser.getPosition
+                        |> Parser.andThen
+                            (\( row, column ) ->
+                                let
+                                    offset : Int
+                                    offset =
+                                        String.split "\n" originalText
+                                            |> List.take (row - 1)
+                                            |> List.map (\text2 -> String.length text2 + 1)
+                                            |> List.sum
+                                            |> (+) (column - 1)
+                                in
+                                case sliceBytes offset length originalBytes of
+                                    Just bytes ->
+                                        case maybeEncryption of
+                                            Just encryption ->
+                                                decryptStream encryption.key encryption.reference bytes |> a
 
                                             Nothing ->
-                                                Parser.problem "Inflate failed"
+                                                a bytes
 
-                                    Just (Name filter) ->
-                                        Parser.problem ("Can't handle that filter type: " ++ filter)
+                                    Nothing ->
+                                        Parser.problem "Failed to slice bytes"
+                            )
 
-                                    _ ->
-                                        case Parser.run graphicsParser2 (decodeAscii bytes) of
-                                            Ok ok ->
-                                                Parser.succeed (Just ok)
-
-                                            Err _ ->
-                                                Parser.problem "Stream parsing failed"
-
-                            Nothing ->
-                                Parser.problem "Failed to slice bytes"
-                    )
-
-        _ ->
+                _ ->
+                    Parser.succeed Nothing
+                        |. Parser.symbol "endobj"
+    in
+    case Dict.get "Filter" dict of
+        Just (Name "Standard") ->
             Parser.succeed Nothing
-                |. Parser.symbol "endobj"
+
+        Just (Name "FlateDecode") ->
+            parserHelper
+                (\bytes ->
+                    case Flate.inflateZlib bytes of
+                        Just inflated ->
+                            case Parser.run graphicsParser2 (decodeAscii inflated) of
+                                Ok ok ->
+                                    Parser.succeed (Just ok)
+
+                                Err error ->
+                                    Parser.problem "Stream parsing failed 2"
+
+                        Nothing ->
+                            Parser.problem "Inflate failed"
+                )
+
+        Just _ ->
+            Parser.problem "Unknown filter type"
+
+        Nothing ->
+            parserHelper
+                (\bytes ->
+                    case Parser.run graphicsParser2 (decodeAscii bytes) of
+                        Ok ok ->
+                            Parser.succeed (Just ok)
+
+                        Err _ ->
+                            Parser.problem "Stream parsing failed"
+                )
 
 
 encodeAscii : String -> Bytes
@@ -2128,6 +2170,8 @@ basicObjectParser =
         , textParser
         , hexStringParser
         , arrayParser
+        , Parser.symbol "true" |> Parser.map (\_ -> PdfBool True)
+        , Parser.symbol "false" |> Parser.map (\_ -> PdfBool False)
         ]
 
 
@@ -2195,7 +2239,7 @@ type FloatOrInt
 floatOrIntParser : Parser FloatOrInt
 floatOrIntParser =
     Parser.succeed
-        (\negate number maybeDecimal ->
+        (\negate ( maybeNumber, maybeDecimal ) ->
             let
                 negateText : String
                 negateText =
@@ -2204,6 +2248,10 @@ floatOrIntParser =
 
                     else
                         ""
+
+                number : String
+                number =
+                    Maybe.withDefault "0" maybeNumber
             in
             case maybeDecimal of
                 Just decimal ->
@@ -2228,12 +2276,18 @@ floatOrIntParser =
             [ Parser.symbol "-" |> Parser.map (\() -> True)
             , Parser.succeed False
             ]
-        |= chompOneOrMore Char.isDigit
         |= Parser.oneOf
-            [ Parser.succeed Just
+            [ Parser.succeed (\decimal -> ( Nothing, Just decimal ))
                 |. Parser.symbol "."
                 |= chompOneOrMore Char.isDigit
-            , Parser.succeed Nothing
+            , Parser.succeed (\number maybeDecimal -> ( Just number, maybeDecimal ))
+                |= chompOneOrMore Char.isDigit
+                |= Parser.oneOf
+                    [ Parser.succeed Just
+                        |. Parser.symbol "."
+                        |= chompOneOrMore Char.isDigit
+                    , Parser.succeed Nothing
+                    ]
             ]
 
 
@@ -2341,7 +2395,7 @@ textParser =
 
 hexStringParser : Parser Object
 hexStringParser =
-    Parser.succeed Text
+    Parser.succeed HexString
         |. Parser.symbol "<"
         |= textParserHelper '>'
 

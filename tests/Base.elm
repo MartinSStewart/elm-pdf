@@ -182,69 +182,62 @@ tests =
                 Rc4_2.decrypt (Pdf.encodeAscii "Secret") encryptedData
                     |> Pdf.decodeAscii
                     |> Expect.equal "Attack at dawn"
-        , describe "Decryption"
-            (let
-                ownerHash =
-                    "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 69 A7"
-                        |> String.filter Char.isAlphaNum
-                        |> Hex.Convert.toBytes
-                        |> Maybe.withDefault (BE.encode (BE.sequence []))
+        , test "Encrypted stream" <|
+            \() ->
+                let
+                    ownerHash =
+                        "47 E3 00 72 EF 8A 45 6C B2 09 4A 62 69 AE 78 1C 7F 43 53 4C A2 7B 65 8B 13 54 F3 DC 3F 5C 69 A7"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
 
-                idEntry =
-                    "d19ade06181e7ee412ba31589d95c0be"
-                        |> String.filter Char.isAlphaNum
-                        |> Hex.Convert.toBytes
-                        |> Maybe.withDefault (BE.encode (BE.sequence []))
+                    idEntry =
+                        "d19ade06181e7ee412ba31589d95c0be"
+                            |> String.filter Char.isAlphaNum
+                            |> Hex.Convert.toBytes
+                            |> Maybe.withDefault (BE.encode (BE.sequence []))
 
-                pEntry =
-                    BE.unsignedInt32 LE -1852 |> BE.encode
-             in
-             [ testDecrypt 0 ownerHash pEntry idEntry ]
-            )
+                    pEntry =
+                        BE.unsignedInt32 LE -1852 |> BE.encode
+
+                    key =
+                        Pdf.getRc4Key 16 ownerHash pEntry idEntry
+
+                    expectedKey =
+                        [ 181
+                        , 108
+                        , 228
+                        , 153
+                        , 249
+                        , 103
+                        , 190
+                        , 196
+                        , 6
+                        , 227
+                        , 126
+                        , 73
+                        , 195
+                        , 85
+                        , 95
+                        , 167
+                        ]
+
+                    decrypted =
+                        Pdf.decryptStream key { index = encryptedStream3.index, revision = 0 } encryptedStream3.bytes
+                in
+                if Just expectedKey == Pdf.bytesToInts key then
+                    case Flate.inflateZlib decrypted of
+                        Just inflated ->
+                            Pdf.decodeAscii inflated
+                                |> Parser.run Pdf.graphicsParser2
+                                |> Expect.ok
+
+                        Nothing ->
+                            Expect.fail "Invalid flate data"
+
+                else
+                    Expect.fail "Invalid key"
         ]
-
-
-testDecrypt index ownerHash pEntry idEntry =
-    test ("Encrypted stream " ++ String.fromInt index) <|
-        \() ->
-            let
-                key =
-                    Pdf.getRc4Key 16 ownerHash pEntry idEntry
-
-                expectedKey =
-                    [ 181
-                    , 108
-                    , 228
-                    , 153
-                    , 249
-                    , 103
-                    , 190
-                    , 196
-                    , 6
-                    , 227
-                    , 126
-                    , 73
-                    , 195
-                    , 85
-                    , 95
-                    , 167
-                    ]
-
-                decrypted =
-                    Pdf.decryptStream key { index = encryptedStream3.index, revision = 0 } encryptedStream3.bytes
-            in
-            if Just expectedKey == Pdf.bytesToInts key then
-                case Flate.inflateZlib decrypted of
-                    Just inflated ->
-                        Pdf.decodeAscii inflated
-                            |> Parser.run Pdf.graphicsParser2
-                            |> Expect.ok
-
-                    Nothing ->
-                        Expect.fail "Invalid flate data"
-
-            else
-                Expect.fail "Invalid key"
 
 
 encryptedStream3 =
