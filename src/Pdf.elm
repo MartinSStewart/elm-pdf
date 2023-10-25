@@ -588,11 +588,11 @@ fromBytes bytes =
                             case Dict.get "Root" xRef.metadata of
                                 Just (IndirectReference ref) ->
                                     case parseSection2 maybeEncryption ref sections1 of
-                                        ( sections2, Ok ( rootSection, _ ) ) ->
+                                        ( sections2, Ok (PdfDict rootSection) ) ->
                                             case Dict.get "Pages" rootSection of
                                                 Just (IndirectReference pagesRef) ->
                                                     case parseSection2 maybeEncryption pagesRef sections2 of
-                                                        ( sections3, Ok ( pagesSection, _ ) ) ->
+                                                        ( sections3, Ok (PdfDict pagesSection) ) ->
                                                             case Dict.get "Kids" pagesSection of
                                                                 Just (PdfArray array) ->
                                                                     { metadata = xRef.metadata
@@ -618,13 +618,13 @@ fromBytes bytes =
                                                                 _ ->
                                                                     Err "Missing page list"
 
-                                                        ( sections3, Err error ) ->
+                                                        ( sections3, _ ) ->
                                                             Err "Failed to parse pages object"
 
                                                 _ ->
                                                     Err "Missing pages reference"
 
-                                        ( sections2, Err error ) ->
+                                        ( sections2, _ ) ->
                                             Err "Failed to parse root object"
 
                                 _ ->
@@ -640,14 +640,8 @@ fromBytes bytes =
             Err error
 
 
-fontKeyParser =
-    Parser.succeed identity
-        |. Parser.symbol "F"
-        |= Parser.int
-
-
 type Section
-    = IsParsed (Result (List DeadEnd) ( Dict String Object, Maybe StreamContent ))
+    = IsParsed (Result (List DeadEnd) Object)
     | IsNotParsed { bytes : Bytes, text : String }
 
 
@@ -655,26 +649,26 @@ getFonts :
     Config
     -> Dict ( Int, Int ) Section
     -> Dict String Object
-    -> ( Dict ( Int, Int ) Section, Dict Int (Dict String Char) )
+    -> ( Dict ( Int, Int ) Section, List (Dict String Char) )
 getFonts config sections resourceDict =
     List.foldl
-        (\( name, value ) ( sections5, fonts2 ) ->
-            case ( Parser.run fontKeyParser name, value ) of
-                ( Ok fontIndex, IndirectReference fontRef ) ->
+        (\( _, value ) ( sections5, fonts2 ) ->
+            case value of
+                IndirectReference fontRef ->
                     case parseSection2 config fontRef sections5 of
-                        ( sections6, Ok ( fontDict, _ ) ) ->
+                        ( sections6, Ok (PdfDict fontDict) ) ->
                             case Dict.get "ToUnicode" fontDict of
                                 Just (IndirectReference unicodeRef) ->
                                     case parseSection2 config unicodeRef sections6 of
-                                        ( sections7, Ok ( _, Just (ToUnicodeData unicodeData) ) ) ->
+                                        ( sections7, Ok (Stream _ (ToUnicodeData unicodeData)) ) ->
                                             ( sections7
-                                            , Dict.insert fontIndex unicodeData fonts2
+                                            , unicodeData :: fonts2
                                             )
 
                                         ( sections7, a ) ->
                                             let
                                                 _ =
-                                                    Debug.log "a" a
+                                                    Debug.log "aa" a
                                             in
                                             ( sections7, fonts2 )
 
@@ -685,7 +679,7 @@ getFonts config sections resourceDict =
                                     in
                                     ( sections6, fonts2 )
 
-                        ( sections6, Err _ ) ->
+                        ( sections6, _ ) ->
                             let
                                 _ =
                                     Debug.log "c" ()
@@ -699,7 +693,7 @@ getFonts config sections resourceDict =
                     in
                     ( sections5, fonts2 )
         )
-        ( sections, Dict.empty )
+        ( sections, [] )
         (Dict.toList resourceDict)
 
 
@@ -729,6 +723,28 @@ hexStringToString font hexString =
         |> String.fromList
 
 
+getValue : comparable -> Config -> Dict comparable Object -> Dict ( Int, Int ) Section -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) Object )
+getValue key config dict sections =
+    case Dict.get key dict of
+        Just (IndirectReference resourcesRef) ->
+            case parseSection2 config resourcesRef sections of
+                ( sections2, result ) ->
+                    ( sections2, result )
+
+        Just object ->
+            ( sections, Ok object )
+
+        Nothing ->
+            ( sections
+            , Err
+                [ { row = 0
+                  , col = 0
+                  , problem = Parser.Expecting "Key not found"
+                  }
+                ]
+            )
+
+
 getPageContents :
     Config
     -> Dict ( Int, Int ) Section
@@ -738,26 +754,26 @@ getPageContents config sections refObject =
     case refObject of
         IndirectReference ref ->
             case parseSection2 config ref sections of
-                ( sections2, Ok ( pageSection, _ ) ) ->
-                    case ( Dict.get "Contents" pageSection, Dict.get "Resources" pageSection ) of
-                        ( Just (IndirectReference contentRef), Just (PdfDict resources) ) ->
+                ( sections2, Ok (PdfDict pageSection) ) ->
+                    case ( Dict.get "Contents" pageSection, getValue "Resources" config pageSection sections2 ) of
+                        ( Just (IndirectReference contentRef), ( sections3_2, Ok (PdfDict resources) ) ) ->
                             let
                                 ( sections3, font ) =
                                     case Dict.get "Font" resources of
                                         Just (PdfDict fontDict) ->
                                             let
                                                 ( sections4, fonts ) =
-                                                    getFonts config sections2 fontDict
+                                                    getFonts config sections3_2 fontDict
                                             in
                                             ( sections4
-                                            , Dict.foldl (\_ value dict -> Dict.union value dict) Dict.empty fonts
+                                            , List.foldl (\value dict -> Dict.union value dict) Dict.empty fonts
                                             )
 
                                         _ ->
-                                            ( sections2, Dict.empty )
+                                            ( sections3_2, Dict.empty )
                             in
                             case parseSection2 config contentRef sections3 of
-                                ( sections4, Ok ( _, Just (DrawingInstructions drawingInstructions) ) ) ->
+                                ( sections4, Ok (Stream _ (DrawingInstructions drawingInstructions)) ) ->
                                     let
                                         mergeOrAppend :
                                             String
@@ -871,8 +887,8 @@ getPageContents config sections refObject =
                                 ( sections4, Err error ) ->
                                     ( sections4, Err error )
 
-                        _ ->
-                            ( sections2
+                        ( _, ( sections3, _ ) ) ->
+                            ( sections3
                             , Err
                                 [ { row = 0
                                   , col = 0
@@ -881,8 +897,15 @@ getPageContents config sections refObject =
                                 ]
                             )
 
-                ( sections2, Err error ) ->
-                    ( sections2, Err error )
+                ( sections2, _ ) ->
+                    ( sections2
+                    , Err
+                        [ { row = 0
+                          , col = 0
+                          , problem = Parser.Expecting "32"
+                          }
+                        ]
+                    )
 
         _ ->
             ( sections
@@ -899,29 +922,13 @@ parseSection2 :
     Config
     -> IndirectReference_
     -> Dict ( Int, Int ) Section
-    -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) ( Dict String Object, Maybe StreamContent ) )
+    -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) Object )
 parseSection2 config ref sections =
     case Dict.get ( ref.index, ref.revision ) sections of
         Just (IsNotParsed section) ->
             let
                 result =
-                    case parseSection config section of
-                        Ok (PdfDict parsedSection) ->
-                            Ok ( parsedSection, Nothing )
-
-                        Ok (Stream dict stream) ->
-                            Ok ( dict, Just stream )
-
-                        Ok _ ->
-                            Err
-                                [ { row = 0
-                                  , col = 0
-                                  , problem = Parser.Expecting "4"
-                                  }
-                                ]
-
-                        Err error ->
-                            Err error
+                    parseSection config section sections
             in
             ( Dict.insert ( ref.index, ref.revision ) (IsParsed result) sections, result )
 
@@ -939,10 +946,10 @@ parseSection2 config ref sections =
             )
 
 
-parseSection : Config -> { bytes : Bytes, text : String } -> Result (List DeadEnd) Object
-parseSection config section =
+parseSection : Config -> { bytes : Bytes, text : String } -> Dict ( Int, Int ) Section -> Result (List DeadEnd) Object
+parseSection config section sections =
     Parser.run
-        (topLevelObjectParser config section.bytes section.text)
+        (topLevelObjectParser config section.bytes section.text sections)
         section.text
 
 
@@ -951,7 +958,7 @@ handleEncryption xRef sections0 =
     case ( Dict.get "Encrypt" xRef.metadata, Dict.get "ID" xRef.metadata ) of
         ( Just (IndirectReference ref), Just (PdfArray idData) ) ->
             case parseSection2 { encryption = Nothing } ref sections0 of
-                ( sections1, Ok ( dict, _ ) ) ->
+                ( sections1, Ok (PdfDict dict) ) ->
                     ( sections1
                     , case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
                         ( Just (PdfInt length), Just (PdfInt pEntry), Just (Text ownerHash) ) ->
@@ -2187,17 +2194,19 @@ type alias EncryptionData =
 
 
 streamParser :
-    Maybe EncryptionData
+    Config
+    -> IndirectReference_
     -> Bytes
     -> String
     -> Dict String Object
+    -> Dict ( Int, Int ) Section
     -> Parser (Maybe StreamContent)
-streamParser maybeEncryption originalBytes originalText dict =
+streamParser config ref originalBytes originalText dict sections =
     let
         parserHelper : (Bytes -> Parser (Maybe a)) -> Parser (Maybe a)
         parserHelper a =
-            case Dict.get "Length" dict of
-                Just (PdfInt length) ->
+            case getValue "Length" config dict sections of
+                ( sections2, Ok (PdfInt length) ) ->
                     Parser.succeed identity
                         |. Parser.symbol "stream"
                         |. Parser.oneOf [ Parser.symbol "\n", Parser.symbol "\u{000D}\n" ]
@@ -2215,9 +2224,9 @@ streamParser maybeEncryption originalBytes originalText dict =
                                 in
                                 case sliceBytes offset length originalBytes of
                                     Just bytes ->
-                                        case maybeEncryption of
+                                        case config.encryption of
                                             Just encryption ->
-                                                decryptStream encryption.key encryption.reference bytes |> a
+                                                decryptStream encryption ref bytes |> a
 
                                             Nothing ->
                                                 a bytes
@@ -2226,7 +2235,7 @@ streamParser maybeEncryption originalBytes originalText dict =
                                         Parser.problem "Failed to slice bytes"
                             )
 
-                _ ->
+                ( sections2, _ ) ->
                     Parser.succeed Nothing
                         |. Parser.symbol "endobj"
     in
@@ -2239,7 +2248,7 @@ streamParser maybeEncryption originalBytes originalText dict =
                 (\bytes ->
                     case Flate.inflateZlib bytes of
                         Just inflated ->
-                            case Parser.run streamContentParser (decodeAscii inflated |> Debug.log "stream") of
+                            case Parser.run streamContentParser (decodeAscii inflated) of
                                 Ok ok ->
                                     Parser.succeed (Just ok)
 
@@ -2363,7 +2372,6 @@ streamContentParser =
                                                                 |> Hex.Convert.toString
                                                             , targetStart + index - start |> Char.fromCode
                                                             )
-                                                                |> Debug.log "abc"
                                                         )
                                                         (List.range start end)
                                                         ++ list
@@ -2427,28 +2435,29 @@ topLevelReferenceParser =
         |. Parser.symbol "obj"
 
 
-topLevelObjectParser : Config -> Bytes -> String -> Parser Object
-topLevelObjectParser config originalBytes originalText =
+topLevelObjectParser : Config -> Bytes -> String -> Dict ( Int, Int ) Section -> Parser Object
+topLevelObjectParser config originalBytes originalText sections =
     Parser.succeed Tuple.pair
         |= topLevelReferenceParser
         |. Parser.spaces
-        |= dictParser
+        |= objectParser
         |> Parser.andThen
-            (\( reference, dict ) ->
-                streamParser
-                    (Maybe.map (\key -> { key = key, reference = reference }) config.encryption)
-                    originalBytes
-                    originalText
-                    dict
-                    |> Parser.map
-                        (\maybeStream ->
-                            case maybeStream of
-                                Just stream ->
-                                    Stream dict stream
+            (\( reference, object ) ->
+                case object of
+                    PdfDict dict ->
+                        streamParser config reference originalBytes originalText dict sections
+                            |> Parser.map
+                                (\maybeStream ->
+                                    case maybeStream of
+                                        Just stream ->
+                                            Stream dict stream
 
-                                Nothing ->
-                                    PdfDict dict
-                        )
+                                        Nothing ->
+                                            PdfDict dict
+                                )
+
+                    _ ->
+                        Parser.succeed object
             )
 
 
@@ -2631,7 +2640,7 @@ getRc4Key hashByteLength oEntry pEntry idEntry =
                 ]
                 |> BE.encode
     in
-    List.foldr
+    List.foldl
         (\_ hash -> Md5.fromBytes hash |> Hex.Convert.toBytes |> Maybe.withDefault emptyBytes)
         initialHash
         -- Hash 51 times
