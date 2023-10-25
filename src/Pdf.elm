@@ -3,7 +3,7 @@ module Pdf exposing
     , text, imageFit, imageStretch, Item, PageCoordinates
     , jpeg, imageSize, Image, ImageId
     , helvetica, timesRoman, courier, symbol, zapfDingbats, Font
-    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), bytesToInts, decodeAscii, decryptStream, emptyBytes, encodeAscii, fromBytes, getRc4Key, graphicsParser2, topLevelObjectParser
+    , DecodedPdf, GraphicsInstruction, Object(..), Operator(..), StreamContent(..), bytesToInts, decodeAscii, decryptStream, emptyBytes, encodeAscii, fromBytes, getRc4Key, streamContentParser, topLevelObjectParser
     )
 
 {-| In order to use this package you'll need to install
@@ -548,7 +548,7 @@ fromBytes bytes =
                     case decodeAscii bytes2 |> Parser.run xRefParser of
                         Ok xRef ->
                             let
-                                sections0 : Dict ( Int, Int ) { bytes : Bytes, text : String }
+                                sections0 : Dict ( Int, Int ) Section
                                 sections0 =
                                     List.foldr
                                         (\offset state ->
@@ -568,7 +568,7 @@ fromBytes bytes =
                                                             Ok ref ->
                                                                 Dict.insert
                                                                     ( ref.index, ref.revision )
-                                                                    { bytes = endSection, text = endSectionText }
+                                                                    (IsNotParsed { bytes = endSection, text = endSectionText })
                                                                     state.sections
 
                                                             Err error ->
@@ -582,39 +582,49 @@ fromBytes bytes =
                                         (List.sort xRef.references)
                                         |> .sections
 
-                                maybeEncryption : Maybe Bytes
-                                maybeEncryption =
+                                ( sections1, maybeEncryption ) =
                                     handleEncryption xRef sections0
                             in
                             case Dict.get "Root" xRef.metadata of
                                 Just (IndirectReference ref) ->
-                                    case parseSection2 maybeEncryption ref sections0 of
-                                        Ok ( rootSection, _ ) ->
+                                    case parseSection2 maybeEncryption ref sections1 of
+                                        ( sections2, Ok ( rootSection, _ ) ) ->
                                             case Dict.get "Pages" rootSection of
                                                 Just (IndirectReference pagesRef) ->
-                                                    case parseSection2 maybeEncryption pagesRef sections0 of
-                                                        Ok ( pagesSection, _ ) ->
+                                                    case parseSection2 maybeEncryption pagesRef sections2 of
+                                                        ( sections3, Ok ( pagesSection, _ ) ) ->
                                                             case Dict.get "Kids" pagesSection of
                                                                 Just (PdfArray array) ->
                                                                     { metadata = xRef.metadata
                                                                     , pages =
-                                                                        Array.map
-                                                                            (getPageContents maybeEncryption sections0)
-                                                                            array
-                                                                            |> Array.toList
+                                                                        List.foldl
+                                                                            (\pageRef ( sections4, parsedPages ) ->
+                                                                                let
+                                                                                    ( sections5, parsedPage ) =
+                                                                                        getPageContents
+                                                                                            maybeEncryption
+                                                                                            sections4
+                                                                                            pageRef
+                                                                                in
+                                                                                ( sections5, parsedPage :: parsedPages )
+                                                                            )
+                                                                            ( sections3, [] )
+                                                                            (Array.toList array)
+                                                                            |> Tuple.second
+                                                                            |> List.reverse
                                                                     }
                                                                         |> Ok
 
                                                                 _ ->
                                                                     Err "Missing page list"
 
-                                                        Err error ->
+                                                        ( sections3, Err error ) ->
                                                             Err "Failed to parse pages object"
 
                                                 _ ->
                                                     Err "Missing pages reference"
 
-                                        Err error ->
+                                        ( sections2, Err error ) ->
                                             Err "Failed to parse root object"
 
                                 _ ->
@@ -630,163 +640,345 @@ fromBytes bytes =
             Err error
 
 
-getPageContents : Maybe Bytes -> Dict ( Int, Int ) { bytes : Bytes, text : String } -> Object -> Result (List DeadEnd) (List String)
-getPageContents maybeEncryption sections refObject =
+fontKeyParser =
+    Parser.succeed identity
+        |. Parser.symbol "F"
+        |= Parser.int
+
+
+type Section
+    = IsParsed (Result (List DeadEnd) ( Dict String Object, Maybe StreamContent ))
+    | IsNotParsed { bytes : Bytes, text : String }
+
+
+getFonts :
+    Config
+    -> Dict ( Int, Int ) Section
+    -> Dict String Object
+    -> ( Dict ( Int, Int ) Section, Dict Int (Dict String Char) )
+getFonts config sections resourceDict =
+    List.foldl
+        (\( name, value ) ( sections5, fonts2 ) ->
+            case ( Parser.run fontKeyParser name, value ) of
+                ( Ok fontIndex, IndirectReference fontRef ) ->
+                    case parseSection2 config fontRef sections5 of
+                        ( sections6, Ok ( fontDict, _ ) ) ->
+                            case Dict.get "ToUnicode" fontDict of
+                                Just (IndirectReference unicodeRef) ->
+                                    case parseSection2 config unicodeRef sections6 of
+                                        ( sections7, Ok ( _, Just (ToUnicodeData unicodeData) ) ) ->
+                                            ( sections7
+                                            , Dict.insert fontIndex unicodeData fonts2
+                                            )
+
+                                        ( sections7, a ) ->
+                                            let
+                                                _ =
+                                                    Debug.log "a" a
+                                            in
+                                            ( sections7, fonts2 )
+
+                                _ ->
+                                    let
+                                        _ =
+                                            Debug.log "b" ()
+                                    in
+                                    ( sections6, fonts2 )
+
+                        ( sections6, Err _ ) ->
+                            let
+                                _ =
+                                    Debug.log "c" ()
+                            in
+                            ( sections6, fonts2 )
+
+                _ ->
+                    let
+                        _ =
+                            Debug.log "d" ()
+                    in
+                    ( sections5, fonts2 )
+        )
+        ( sections, Dict.empty )
+        (Dict.toList resourceDict)
+
+
+type alias Config =
+    { encryption : Maybe Bytes
+    }
+
+
+hexStringToString : Dict String Char -> String -> String
+hexStringToString font hexString =
+    (String.length hexString // 4 - 1)
+        |> List.range 0
+        |> List.map
+            (\index ->
+                let
+                    slice : String
+                    slice =
+                        String.slice (index * 4) ((index + 1) * 4) hexString
+                in
+                case Dict.get slice font of
+                    Just char ->
+                        char
+
+                    Nothing ->
+                        '?'
+            )
+        |> String.fromList
+
+
+getPageContents :
+    Config
+    -> Dict ( Int, Int ) Section
+    -> Object
+    -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) (List String) )
+getPageContents config sections refObject =
     case refObject of
         IndirectReference ref ->
-            case parseSection2 maybeEncryption ref sections of
-                Ok ( pageSection, _ ) ->
+            case parseSection2 config ref sections of
+                ( sections2, Ok ( pageSection, _ ) ) ->
                     case ( Dict.get "Contents" pageSection, Dict.get "Resources" pageSection ) of
                         ( Just (IndirectReference contentRef), Just (PdfDict resources) ) ->
-                            case parseSection2 maybeEncryption contentRef sections of
-                                Ok ( _, Just (DrawingInstructions drawingInstructions) ) ->
-                                    List.concatMap
-                                        (\instruction ->
+                            let
+                                ( sections3, font ) =
+                                    case Dict.get "Font" resources of
+                                        Just (PdfDict fontDict) ->
+                                            let
+                                                ( sections4, fonts ) =
+                                                    getFonts config sections2 fontDict
+                                            in
+                                            ( sections4
+                                            , Dict.foldl (\_ value dict -> Dict.union value dict) Dict.empty fonts
+                                            )
+
+                                        _ ->
+                                            ( sections2, Dict.empty )
+                            in
+                            case parseSection2 config contentRef sections3 of
+                                ( sections4, Ok ( _, Just (DrawingInstructions drawingInstructions) ) ) ->
+                                    let
+                                        mergeOrAppend :
+                                            String
+                                            -> { text : Array String, canMerge : Bool }
+                                            -> { text : Array String, canMerge : Bool }
+                                        mergeOrAppend text2 state =
+                                            { text =
+                                                case
+                                                    ( Array.get (Array.length state.text - 1) state.text
+                                                    , state.canMerge
+                                                    )
+                                                of
+                                                    ( Just last, True ) ->
+                                                        Array.set (Array.length state.text - 1) (last ++ text2) state.text
+
+                                                    _ ->
+                                                        Array.push text2 state.text
+                                            , canMerge = True
+                                            }
+                                    in
+                                    List.foldl
+                                        (\instruction state ->
                                             case ( instruction.operator, instruction.parameters ) of
+                                                ( Td, [ PdfFloat xOffset, PdfInt 0 ] ) ->
+                                                    if abs xOffset < 20 then
+                                                        state
+
+                                                    else
+                                                        { text = state.text, canMerge = False }
+
+                                                ( Td, [ PdfInt xOffset, PdfInt 0 ] ) ->
+                                                    if abs xOffset < 20 then
+                                                        state
+
+                                                    else
+                                                        { text = state.text, canMerge = False }
+
                                                 ( Tj, [ Text text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend text2 state
 
                                                 ( Tj, [ HexString text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend (hexStringToString font text2) state
 
                                                 ( SingleQuote, [ Text text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend text2 state
 
                                                 ( SingleQuote, [ HexString text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend (hexStringToString font text2) state
 
                                                 ( DoubleQuote, [ _, _, Text text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend text2 state
 
                                                 ( DoubleQuote, [ _, _, HexString text2 ] ) ->
-                                                    [ text2 ]
+                                                    mergeOrAppend (hexStringToString font text2) state
 
                                                 ( TJ, variable ) ->
-                                                    List.filterMap
-                                                        (\a ->
-                                                            case a of
-                                                                Text text2 ->
-                                                                    Just text2
+                                                    { text =
+                                                        List.filterMap
+                                                            (\a ->
+                                                                case a of
+                                                                    Text text2 ->
+                                                                        Just text2
 
-                                                                HexString text2 ->
-                                                                    Just text2
+                                                                    HexString text2 ->
+                                                                        hexStringToString font text2 |> Just
 
-                                                                _ ->
-                                                                    Nothing
-                                                        )
-                                                        variable
+                                                                    _ ->
+                                                                        Nothing
+                                                            )
+                                                            variable
+                                                            |> Array.fromList
+                                                            |> Array.append state.text
+                                                    , canMerge = True
+                                                    }
+
+                                                ( BDC, _ ) ->
+                                                    state
+
+                                                ( EMC, _ ) ->
+                                                    state
+
+                                                ( BMC, _ ) ->
+                                                    state
+
+                                                ( MP, _ ) ->
+                                                    state
+
+                                                ( DP, _ ) ->
+                                                    state
 
                                                 _ ->
-                                                    []
+                                                    { text = state.text, canMerge = False }
                                         )
+                                        { text = Array.empty, canMerge = False }
                                         drawingInstructions
+                                        |> .text
+                                        |> Array.toList
                                         |> Ok
+                                        |> Tuple.pair sections4
 
-                                Ok _ ->
-                                    Err
+                                ( sections4, Ok _ ) ->
+                                    ( sections4
+                                    , Err
                                         [ { row = 0
                                           , col = 0
                                           , problem = Parser.Expecting "1"
                                           }
                                         ]
+                                    )
 
-                                Err error ->
-                                    Err error
+                                ( sections4, Err error ) ->
+                                    ( sections4, Err error )
 
                         _ ->
-                            Err
+                            ( sections2
+                            , Err
                                 [ { row = 0
                                   , col = 0
                                   , problem = Parser.Expecting "2"
                                   }
                                 ]
+                            )
 
-                Err error ->
-                    Err error
+                ( sections2, Err error ) ->
+                    ( sections2, Err error )
 
         _ ->
-            Err
+            ( sections
+            , Err
                 [ { row = 0
                   , col = 0
                   , problem = Parser.Expecting "3"
                   }
                 ]
+            )
 
 
 parseSection2 :
-    Maybe Bytes
+    Config
     -> IndirectReference_
-    -> Dict ( Int, Int ) { bytes : Bytes, text : String }
-    -> Result (List DeadEnd) ( Dict String Object, Maybe StreamContent )
-parseSection2 maybeEncryption ref sections0 =
-    case Dict.get ( ref.index, ref.revision ) sections0 of
-        Just section ->
-            case parseSection maybeEncryption section of
-                Ok (PdfDict parsedSection) ->
-                    Ok ( parsedSection, Nothing )
+    -> Dict ( Int, Int ) Section
+    -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) ( Dict String Object, Maybe StreamContent ) )
+parseSection2 config ref sections =
+    case Dict.get ( ref.index, ref.revision ) sections of
+        Just (IsNotParsed section) ->
+            let
+                result =
+                    case parseSection config section of
+                        Ok (PdfDict parsedSection) ->
+                            Ok ( parsedSection, Nothing )
 
-                Ok (Stream dict stream) ->
-                    Ok ( dict, Just stream )
+                        Ok (Stream dict stream) ->
+                            Ok ( dict, Just stream )
 
-                Ok _ ->
-                    Err
-                        [ { row = 0
-                          , col = 0
-                          , problem = Parser.Expecting "4"
-                          }
-                        ]
+                        Ok _ ->
+                            Err
+                                [ { row = 0
+                                  , col = 0
+                                  , problem = Parser.Expecting "4"
+                                  }
+                                ]
 
-                Err error ->
-                    Err error
+                        Err error ->
+                            Err error
+            in
+            ( Dict.insert ( ref.index, ref.revision ) (IsParsed result) sections, result )
+
+        Just (IsParsed result) ->
+            ( sections, result )
 
         Nothing ->
-            Err
+            ( sections
+            , Err
                 [ { row = ref.index
                   , col = ref.revision
                   , problem = Parser.Expecting "5"
                   }
                 ]
+            )
 
 
-parseSection : Maybe Bytes -> { bytes : Bytes, text : String } -> Result (List DeadEnd) Object
-parseSection maybeEncryption section =
+parseSection : Config -> { bytes : Bytes, text : String } -> Result (List DeadEnd) Object
+parseSection config section =
     Parser.run
-        (topLevelObjectParser maybeEncryption section.bytes section.text)
+        (topLevelObjectParser config section.bytes section.text)
         section.text
 
 
-handleEncryption :
-    XRefTable
-    -> Dict ( Int, Int ) { bytes : Bytes, text : String }
-    -> Maybe Bytes
+handleEncryption : XRefTable -> Dict ( Int, Int ) Section -> ( Dict ( Int, Int ) Section, Config )
 handleEncryption xRef sections0 =
     case ( Dict.get "Encrypt" xRef.metadata, Dict.get "ID" xRef.metadata ) of
         ( Just (IndirectReference ref), Just (PdfArray idData) ) ->
-            case parseSection2 Nothing ref sections0 of
-                Ok ( dict, _ ) ->
-                    case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
+            case parseSection2 { encryption = Nothing } ref sections0 of
+                ( sections1, Ok ( dict, _ ) ) ->
+                    ( sections1
+                    , case ( Dict.get "Length" dict, Dict.get "P" dict, Dict.get "O" dict ) of
                         ( Just (PdfInt length), Just (PdfInt pEntry), Just (Text ownerHash) ) ->
-                            getRc4Key
-                                (length // 8)
-                                (encodeAscii ownerHash)
-                                (BE.unsignedInt32 LE pEntry |> BE.encode)
-                                (case Array.get 0 idData of
-                                    Just (HexString hex) ->
-                                        Hex.Convert.toBytes hex |> Maybe.withDefault emptyBytes
+                            { encryption =
+                                getRc4Key
+                                    (length // 8)
+                                    (encodeAscii ownerHash)
+                                    (BE.unsignedInt32 LE pEntry |> BE.encode)
+                                    (case Array.get 0 idData of
+                                        Just (HexString hex) ->
+                                            Hex.Convert.toBytes hex |> Maybe.withDefault emptyBytes
 
-                                    _ ->
-                                        emptyBytes
-                                )
-                                |> Just
+                                        _ ->
+                                            emptyBytes
+                                    )
+                                    |> Just
+                            }
 
                         _ ->
-                            Nothing
+                            { encryption = Nothing }
+                    )
 
-                _ ->
-                    Nothing
+                ( sections1, _ ) ->
+                    ( sections1, { encryption = Nothing } )
 
         _ ->
-            Nothing
+            ( sections0, { encryption = Nothing } )
 
 
 {-| An encoder for converting the PDF to binary data.
@@ -1446,6 +1638,7 @@ encodeObject object =
                                 deflate =
                                     False
 
+                                textBytes : Bytes
                                 textBytes =
                                     encodeGraphicsInstructions text_
                                         |> BE.encode
@@ -1465,6 +1658,9 @@ encodeObject object =
                                         identity
                                    )
                             )
+
+                        ToUnicodeData _ ->
+                            ( BE.string "" |> BE.encode, dict )
             in
             BE.sequence
                 [ encodePdfDict dict2
@@ -1995,7 +2191,7 @@ streamParser :
     -> Bytes
     -> String
     -> Dict String Object
-    -> Parser (Maybe (List GraphicsInstruction))
+    -> Parser (Maybe StreamContent)
 streamParser maybeEncryption originalBytes originalText dict =
     let
         parserHelper : (Bytes -> Parser (Maybe a)) -> Parser (Maybe a)
@@ -2004,10 +2200,7 @@ streamParser maybeEncryption originalBytes originalText dict =
                 Just (PdfInt length) ->
                     Parser.succeed identity
                         |. Parser.symbol "stream"
-                        |. Parser.oneOf
-                            [ Parser.symbol "\n"
-                            , Parser.symbol "\u{000D}\n"
-                            ]
+                        |. Parser.oneOf [ Parser.symbol "\n", Parser.symbol "\u{000D}\n" ]
                         |= Parser.getPosition
                         |> Parser.andThen
                             (\( row, column ) ->
@@ -2046,11 +2239,15 @@ streamParser maybeEncryption originalBytes originalText dict =
                 (\bytes ->
                     case Flate.inflateZlib bytes of
                         Just inflated ->
-                            case Parser.run graphicsParser2 (decodeAscii inflated |> Debug.log "flate") of
+                            case Parser.run streamContentParser (decodeAscii inflated |> Debug.log "stream") of
                                 Ok ok ->
                                     Parser.succeed (Just ok)
 
                                 Err error ->
+                                    let
+                                        _ =
+                                            Debug.log "error" error
+                                    in
                                     Parser.problem "Stream parsing failed 2"
 
                         Nothing ->
@@ -2063,7 +2260,7 @@ streamParser maybeEncryption originalBytes originalText dict =
         Nothing ->
             parserHelper
                 (\bytes ->
-                    case Parser.run graphicsParser2 (decodeAscii bytes) of
+                    case Parser.run streamContentParser (decodeAscii bytes) of
                         Ok ok ->
                             Parser.succeed (Just ok)
 
@@ -2101,18 +2298,100 @@ type alias GraphicsInstruction =
     { operator : Operator, parameters : List Object }
 
 
-graphicsParser2 : Parser (List GraphicsInstruction)
-graphicsParser2 =
-    Parser.loop
-        []
-        (\list ->
-            Parser.oneOf
-                [ Parser.succeed (\item -> item :: list |> Parser.Loop)
-                    |= graphicsParser
+streamContentParser : Parser StreamContent
+streamContentParser =
+    Parser.oneOf
+        [ Parser.succeed (\first second -> Dict.union first second |> ToUnicodeData)
+            |. Parser.symbol "/CIDInit"
+            |= Parser.oneOf
+                [ Parser.succeed identity
+                    |. Parser.chompUntil "beginbfchar"
+                    |. Parser.symbol "beginbfchar"
                     |. Parser.spaces
-                , Parser.end |> Parser.map (\() -> List.reverse list |> Parser.Done)
+                    |= Parser.loop
+                        []
+                        (\list ->
+                            Parser.oneOf
+                                [ Parser.symbol "endbfchar"
+                                    |> Parser.map
+                                        (\() -> Dict.fromList list |> Parser.Done)
+                                , Parser.succeed Tuple.pair
+                                    |= hexStringParser
+                                    |. Parser.spaces
+                                    |= hexStringParser
+                                    |. Parser.spaces
+                                    |> Parser.andThen
+                                        (\( first, second ) ->
+                                            case hex4ToInt second of
+                                                Just value ->
+                                                    ( first, Char.fromCode value ) :: list |> Parser.Loop |> Parser.succeed
+
+                                                Nothing ->
+                                                    Parser.problem "Invalid unicode value"
+                                        )
+                                ]
+                        )
+                , Parser.succeed Dict.empty
                 ]
-        )
+            |= Parser.oneOf
+                [ Parser.succeed identity
+                    |. Parser.chompUntil "beginbfrange"
+                    |. Parser.symbol "beginbfrange"
+                    |. Parser.spaces
+                    |= Parser.loop
+                        []
+                        (\list ->
+                            Parser.oneOf
+                                [ Parser.symbol "endbfrange"
+                                    |> Parser.map
+                                        (\() -> Dict.fromList list |> Parser.Done)
+                                , Parser.succeed (\a b c -> ( a, b, c ))
+                                    |= hexStringParser
+                                    |. Parser.spaces
+                                    |= hexStringParser
+                                    |. Parser.spaces
+                                    |= hexStringParser
+                                    |. Parser.spaces
+                                    |> Parser.andThen
+                                        (\( rangeStart, rangeEnd, targetRangeStart ) ->
+                                            case ( hex4ToInt rangeStart, hex4ToInt rangeEnd, hex4ToInt targetRangeStart ) of
+                                                ( Just start, Just end, Just targetStart ) ->
+                                                    List.map
+                                                        (\index ->
+                                                            ( BE.unsignedInt16 BE index
+                                                                |> BE.encode
+                                                                |> Hex.Convert.toString
+                                                            , targetStart + index - start |> Char.fromCode
+                                                            )
+                                                                |> Debug.log "abc"
+                                                        )
+                                                        (List.range start end)
+                                                        ++ list
+                                                        |> Parser.Loop
+                                                        |> Parser.succeed
+
+                                                _ ->
+                                                    Parser.problem "Invalid unicode value"
+                                        )
+                                ]
+                        )
+                , Parser.succeed Dict.empty
+                ]
+        , Parser.loop
+            []
+            (\list ->
+                Parser.oneOf
+                    [ Parser.succeed (\item -> item :: list |> Parser.Loop)
+                        |= graphicsParser
+                        |. Parser.spaces
+                    , Parser.end |> Parser.map (\() -> List.reverse list |> DrawingInstructions |> Parser.Done)
+                    ]
+            )
+        ]
+
+
+hex4ToInt text2 =
+    Hex.Convert.toBytes text2 |> Maybe.andThen (BD.decode (BD.unsignedInt16 BE))
 
 
 graphicsParser : Parser GraphicsInstruction
@@ -2148,8 +2427,8 @@ topLevelReferenceParser =
         |. Parser.symbol "obj"
 
 
-topLevelObjectParser : Maybe Bytes -> Bytes -> String -> Parser Object
-topLevelObjectParser encryptionKey originalBytes originalText =
+topLevelObjectParser : Config -> Bytes -> String -> Parser Object
+topLevelObjectParser config originalBytes originalText =
     Parser.succeed Tuple.pair
         |= topLevelReferenceParser
         |. Parser.spaces
@@ -2157,7 +2436,7 @@ topLevelObjectParser encryptionKey originalBytes originalText =
         |> Parser.andThen
             (\( reference, dict ) ->
                 streamParser
-                    (Maybe.map (\key -> { key = key, reference = reference }) encryptionKey)
+                    (Maybe.map (\key -> { key = key, reference = reference }) config.encryption)
                     originalBytes
                     originalText
                     dict
@@ -2165,7 +2444,7 @@ topLevelObjectParser encryptionKey originalBytes originalText =
                         (\maybeStream ->
                             case maybeStream of
                                 Just stream ->
-                                    Stream dict (DrawingInstructions stream)
+                                    Stream dict stream
 
                                 Nothing ->
                                     PdfDict dict
@@ -2184,7 +2463,7 @@ basicObjectParser =
         [ dictParser |> Parser.map PdfDict
         , nameParser |> Parser.map Name
         , textParser
-        , hexStringParser
+        , hexStringParser |> Parser.map HexString
         , arrayParser
         , Parser.symbol "true" |> Parser.map (\_ -> PdfBool True)
         , Parser.symbol "false" |> Parser.map (\_ -> PdfBool False)
@@ -2409,9 +2688,9 @@ textParser =
         |= textParserHelper ')'
 
 
-hexStringParser : Parser Object
+hexStringParser : Parser String
 hexStringParser =
-    Parser.succeed HexString
+    Parser.succeed identity
         |. Parser.symbol "<"
         |= textParserHelper '>'
 
@@ -2532,6 +2811,7 @@ indirectObjectIndex (IndirectObject { index }) =
 type StreamContent
     = ResourceData Bytes
     | DrawingInstructions (List GraphicsInstruction)
+    | ToUnicodeData (Dict String Char)
 
 
 floatToString : Float -> String

@@ -45,7 +45,7 @@ tests =
                     bytes2 =
                         BE.string text |> BE.encode
                 in
-                Parser.run (Pdf.topLevelObjectParser Nothing bytes2 text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } bytes2 text) text
                     |> Expect.equal
                         (Ok
                             ([ ( "Type", Name "Page" )
@@ -75,7 +75,7 @@ tests =
                     text =
                         BD.decode (BD.string 303) exampleTopLevelObject |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser Nothing exampleTopLevelObject text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject text) text
                     |> Expect.equal
                         (Ok
                             (Stream
@@ -129,7 +129,7 @@ tests =
                             exampleTopLevelObject2
                             |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser Nothing exampleTopLevelObject2 text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject2 text) text
                     |> Expect.equal
                         (Ok
                             (Stream
@@ -229,7 +229,7 @@ tests =
                     case Flate.inflateZlib decrypted of
                         Just inflated ->
                             Pdf.decodeAscii inflated
-                                |> Parser.run Pdf.graphicsParser2
+                                |> Parser.run Pdf.streamContentParser
                                 |> Expect.ok
 
                         Nothing ->
@@ -237,6 +237,16 @@ tests =
 
                 else
                     Expect.fail "Invalid key"
+        , test "Parse CID data" <|
+            \() ->
+                let
+                    input =
+                        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo\n<<  /Registry (Adobe)\n/Ordering (UCS)\n/Supplement 0\n>> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n1 beginbfchar\n<0026> <0043>\nendbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend"
+
+                    expected =
+                        Dict.fromList [ ( "0026", 'C' ) ] |> ToUnicodeData |> Ok
+                in
+                Parser.run Pdf.streamContentParser input |> Expect.equal expected
         ]
 
 
