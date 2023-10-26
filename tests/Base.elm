@@ -13,7 +13,6 @@ import Parser
 import Pdf exposing (GraphicsInstruction, Object(..), Operator(..), StreamContent(..))
 import Pixels
 import Rc4
-import Rc4_2
 import Test exposing (Test, describe, test)
 
 
@@ -45,7 +44,7 @@ tests =
                     bytes2 =
                         BE.string text |> BE.encode
                 in
-                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } bytes2 text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } bytes2 text Dict.empty) text
                     |> Expect.equal
                         (Ok
                             ([ ( "Type", Name "Page" )
@@ -75,7 +74,7 @@ tests =
                     text =
                         BD.decode (BD.string 303) exampleTopLevelObject |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject text Dict.empty) text
                     |> Expect.equal
                         (Ok
                             (Stream
@@ -129,7 +128,7 @@ tests =
                             exampleTopLevelObject2
                             |> Maybe.withDefault ""
                 in
-                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject2 text) text
+                Parser.run (Pdf.topLevelObjectParser { encryption = Nothing } exampleTopLevelObject2 text Dict.empty) text
                     |> Expect.equal
                         (Ok
                             (Stream
@@ -137,28 +136,6 @@ tests =
                                 (DrawingInstructions expectedDrawingInstructions)
                             )
                         )
-        , test "RC4 encode" <|
-            \() ->
-                let
-                    key =
-                        "Wiki"
-
-                    plainText =
-                        "pedia"
-                in
-                Rc4.encrypt key plainText
-                    |> Expect.equal [ 16, 33, 191, 4, 32 ]
-        , test "RC4 decode" <|
-            \() ->
-                let
-                    key =
-                        "Wiki"
-
-                    plainText =
-                        [ 16, 33, 191, 4, 32 ]
-                in
-                Rc4.decrypt key plainText
-                    |> Expect.equal "pedia"
         , test "RC4 v2 decode" <|
             \() ->
                 let
@@ -167,7 +144,7 @@ tests =
                             |> BE.sequence
                             |> BE.encode
                 in
-                Rc4_2.decrypt (Pdf.encodeAscii "Wiki") encryptedData
+                Rc4.decrypt (Pdf.encodeAscii "Wiki") encryptedData
                     |> Pdf.decodeAscii
                     |> Expect.equal "pedia"
         , test "RC4 v2 decode 2" <|
@@ -179,7 +156,7 @@ tests =
                             |> Hex.Convert.toBytes
                             |> Maybe.withDefault (BE.encode (BE.sequence []))
                 in
-                Rc4_2.decrypt (Pdf.encodeAscii "Secret") encryptedData
+                Rc4.decrypt (Pdf.encodeAscii "Secret") encryptedData
                     |> Pdf.decodeAscii
                     |> Expect.equal "Attack at dawn"
         , test "Encrypted stream" <|

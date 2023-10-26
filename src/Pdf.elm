@@ -60,7 +60,7 @@ import Parser exposing ((|.), (|=), DeadEnd, Parser)
 import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
 import Quantity exposing (Quantity)
-import Rc4_2
+import Rc4
 import Round
 import Set exposing (Set)
 import Vector2d exposing (Vector2d)
@@ -2687,7 +2687,7 @@ decryptStream encryptionKey ref stream =
                 |> Hex.Convert.toBytes
                 |> Maybe.withDefault emptyBytes
     in
-    Rc4_2.decrypt key2 stream
+    Rc4.decrypt key2 stream
 
 
 textParser : Parser Object
