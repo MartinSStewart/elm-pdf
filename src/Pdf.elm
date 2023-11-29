@@ -539,6 +539,79 @@ type alias XRefTable =
     { references : List Int, metadata : Dict String Object }
 
 
+handlePagesTree :
+    Config
+    -> Dict ( Int, Int ) Section
+    -> Dict String Object
+    -> ( Dict ( Int, Int ) Section, List (Result (List DeadEnd) (List String)) )
+handlePagesTree config sections pagesSection =
+    case Dict.get "Type" pagesSection of
+        Just (Name "Pages") ->
+            case Dict.get "Kids" pagesSection of
+                Just (PdfArray array) ->
+                    List.foldl
+                        (\pageRef ( sections4, parsedPages ) ->
+                            let
+                                ( sections5, parsedPage ) =
+                                    case pageRef of
+                                        IndirectReference ref ->
+                                            case parseSection2 config ref sections4 of
+                                                ( sections2, Ok (PdfDict pageSection) ) ->
+                                                    handlePagesTree config sections2 pageSection
+
+                                                ( sections2, _ ) ->
+                                                    ( sections2
+                                                    , [ Err
+                                                            [ { row = 0
+                                                              , col = 0
+                                                              , problem = Parser.Expecting "32"
+                                                              }
+                                                            ]
+                                                      ]
+                                                    )
+
+                                        _ ->
+                                            ( sections4
+                                            , [ Err
+                                                    [ { row = 0
+                                                      , col = 0
+                                                      , problem = Parser.Expecting "3"
+                                                      }
+                                                    ]
+                                              ]
+                                            )
+                            in
+                            ( sections5, parsedPages ++ parsedPage )
+                        )
+                        ( sections, [] )
+                        (Array.toList array)
+
+                _ ->
+                    ( sections
+                    , [ Err
+                            [ { row = 0
+                              , col = 0
+                              , problem = Parser.Expecting "Missing page list"
+                              }
+                            ]
+                      ]
+                    )
+
+        Just (Name "Page") ->
+            getPageContents config sections pagesSection |> Tuple.mapSecond List.singleton
+
+        _ ->
+            ( sections
+            , [ Err
+                    [ { row = 0
+                      , col = 0
+                      , problem = Parser.Expecting "Expected page or pages object"
+                      }
+                    ]
+              ]
+            )
+
+
 fromBytes : Bytes -> Result String DecodedPdf
 fromBytes bytes =
     case getXRefOffset bytes of
@@ -593,30 +666,12 @@ fromBytes bytes =
                                                 Just (IndirectReference pagesRef) ->
                                                     case parseSection2 maybeEncryption pagesRef sections2 of
                                                         ( sections3, Ok (PdfDict pagesSection) ) ->
-                                                            case Dict.get "Kids" pagesSection of
-                                                                Just (PdfArray array) ->
-                                                                    { metadata = xRef.metadata
-                                                                    , pages =
-                                                                        List.foldl
-                                                                            (\pageRef ( sections4, parsedPages ) ->
-                                                                                let
-                                                                                    ( sections5, parsedPage ) =
-                                                                                        getPageContents
-                                                                                            maybeEncryption
-                                                                                            sections4
-                                                                                            pageRef
-                                                                                in
-                                                                                ( sections5, parsedPage :: parsedPages )
-                                                                            )
-                                                                            ( sections3, [] )
-                                                                            (Array.toList array)
-                                                                            |> Tuple.second
-                                                                            |> List.reverse
-                                                                    }
-                                                                        |> Ok
-
-                                                                _ ->
-                                                                    Err "Missing page list"
+                                                            { metadata = xRef.metadata
+                                                            , pages =
+                                                                handlePagesTree maybeEncryption sections3 pagesSection
+                                                                    |> Tuple.second
+                                                            }
+                                                                |> Ok
 
                                                         ( sections3, _ ) ->
                                                             Err "Failed to parse pages object"
@@ -666,31 +721,15 @@ getFonts config sections resourceDict =
                                             )
 
                                         ( sections7, a ) ->
-                                            let
-                                                _ =
-                                                    Debug.log "aa" a
-                                            in
                                             ( sections7, fonts2 )
 
                                 _ ->
-                                    let
-                                        _ =
-                                            Debug.log "b" ()
-                                    in
                                     ( sections6, fonts2 )
 
                         ( sections6, _ ) ->
-                            let
-                                _ =
-                                    Debug.log "c" ()
-                            in
                             ( sections6, fonts2 )
 
                 _ ->
-                    let
-                        _ =
-                            Debug.log "d" ()
-                    in
                     ( sections5, fonts2 )
         )
         ( sections, [] )
@@ -748,171 +787,147 @@ getValue key config dict sections =
 getPageContents :
     Config
     -> Dict ( Int, Int ) Section
-    -> Object
+    -> Dict String Object
     -> ( Dict ( Int, Int ) Section, Result (List DeadEnd) (List String) )
-getPageContents config sections refObject =
-    case refObject of
-        IndirectReference ref ->
-            case parseSection2 config ref sections of
-                ( sections2, Ok (PdfDict pageSection) ) ->
-                    case ( Dict.get "Contents" pageSection, getValue "Resources" config pageSection sections2 ) of
-                        ( Just (IndirectReference contentRef), ( sections3_2, Ok (PdfDict resources) ) ) ->
+getPageContents config sections2 pageSection =
+    case ( Dict.get "Contents" pageSection, getValue "Resources" config pageSection sections2 ) of
+        ( Just (IndirectReference contentRef), ( sections3_2, Ok (PdfDict resources) ) ) ->
+            let
+                ( sections3, font ) =
+                    case Dict.get "Font" resources of
+                        Just (PdfDict fontDict) ->
                             let
-                                ( sections3, font ) =
-                                    case Dict.get "Font" resources of
-                                        Just (PdfDict fontDict) ->
-                                            let
-                                                ( sections4, fonts ) =
-                                                    getFonts config sections3_2 fontDict
-                                            in
-                                            ( sections4
-                                            , List.foldl (\value dict -> Dict.union value dict) Dict.empty fonts
-                                            )
-
-                                        _ ->
-                                            ( sections3_2, Dict.empty )
+                                ( sections4, fonts ) =
+                                    getFonts config sections3_2 fontDict
                             in
-                            case parseSection2 config contentRef sections3 of
-                                ( sections4, Ok (Stream _ (DrawingInstructions drawingInstructions)) ) ->
-                                    let
-                                        mergeOrAppend :
-                                            String
-                                            -> { text : Array String, canMerge : Bool }
-                                            -> { text : Array String, canMerge : Bool }
-                                        mergeOrAppend text2 state =
-                                            { text =
-                                                case
-                                                    ( Array.get (Array.length state.text - 1) state.text
-                                                    , state.canMerge
-                                                    )
-                                                of
-                                                    ( Just last, True ) ->
-                                                        Array.set (Array.length state.text - 1) (last ++ text2) state.text
-
-                                                    _ ->
-                                                        Array.push text2 state.text
-                                            , canMerge = True
-                                            }
-                                    in
-                                    List.foldl
-                                        (\instruction state ->
-                                            case ( instruction.operator, instruction.parameters ) of
-                                                ( Td, [ PdfFloat xOffset, PdfInt 0 ] ) ->
-                                                    if abs xOffset < 20 then
-                                                        state
-
-                                                    else
-                                                        { text = state.text, canMerge = False }
-
-                                                ( Td, [ PdfInt xOffset, PdfInt 0 ] ) ->
-                                                    if abs xOffset < 20 then
-                                                        state
-
-                                                    else
-                                                        { text = state.text, canMerge = False }
-
-                                                ( Tj, [ Text text2 ] ) ->
-                                                    mergeOrAppend text2 state
-
-                                                ( Tj, [ HexString text2 ] ) ->
-                                                    mergeOrAppend (hexStringToString font text2) state
-
-                                                ( SingleQuote, [ Text text2 ] ) ->
-                                                    mergeOrAppend text2 state
-
-                                                ( SingleQuote, [ HexString text2 ] ) ->
-                                                    mergeOrAppend (hexStringToString font text2) state
-
-                                                ( DoubleQuote, [ _, _, Text text2 ] ) ->
-                                                    mergeOrAppend text2 state
-
-                                                ( DoubleQuote, [ _, _, HexString text2 ] ) ->
-                                                    mergeOrAppend (hexStringToString font text2) state
-
-                                                ( TJ, variable ) ->
-                                                    { text =
-                                                        List.filterMap
-                                                            (\a ->
-                                                                case a of
-                                                                    Text text2 ->
-                                                                        Just text2
-
-                                                                    HexString text2 ->
-                                                                        hexStringToString font text2 |> Just
-
-                                                                    _ ->
-                                                                        Nothing
-                                                            )
-                                                            variable
-                                                            |> Array.fromList
-                                                            |> Array.append state.text
-                                                    , canMerge = True
-                                                    }
-
-                                                ( BDC, _ ) ->
-                                                    state
-
-                                                ( EMC, _ ) ->
-                                                    state
-
-                                                ( BMC, _ ) ->
-                                                    state
-
-                                                ( MP, _ ) ->
-                                                    state
-
-                                                ( DP, _ ) ->
-                                                    state
-
-                                                _ ->
-                                                    { text = state.text, canMerge = False }
-                                        )
-                                        { text = Array.empty, canMerge = False }
-                                        drawingInstructions
-                                        |> .text
-                                        |> Array.toList
-                                        |> Ok
-                                        |> Tuple.pair sections4
-
-                                ( sections4, Ok _ ) ->
-                                    ( sections4
-                                    , Err
-                                        [ { row = 0
-                                          , col = 0
-                                          , problem = Parser.Expecting "1"
-                                          }
-                                        ]
-                                    )
-
-                                ( sections4, Err error ) ->
-                                    ( sections4, Err error )
-
-                        ( _, ( sections3, _ ) ) ->
-                            ( sections3
-                            , Err
-                                [ { row = 0
-                                  , col = 0
-                                  , problem = Parser.Expecting "2"
-                                  }
-                                ]
+                            ( sections4
+                            , List.foldl (\value dict -> Dict.union value dict) Dict.empty fonts
                             )
 
-                ( sections2, _ ) ->
-                    ( sections2
+                        _ ->
+                            ( sections3_2, Dict.empty )
+            in
+            case parseSection2 config contentRef sections3 of
+                ( sections4, Ok (Stream _ (DrawingInstructions drawingInstructions)) ) ->
+                    let
+                        mergeOrAppend :
+                            String
+                            -> { text : Array String, canMerge : Bool }
+                            -> { text : Array String, canMerge : Bool }
+                        mergeOrAppend text2 state =
+                            { text =
+                                case
+                                    ( Array.get (Array.length state.text - 1) state.text
+                                    , state.canMerge
+                                    )
+                                of
+                                    ( Just last, True ) ->
+                                        Array.set (Array.length state.text - 1) (last ++ text2) state.text
+
+                                    _ ->
+                                        Array.push text2 state.text
+                            , canMerge = True
+                            }
+                    in
+                    List.foldl
+                        (\instruction state ->
+                            case ( instruction.operator, instruction.parameters ) of
+                                ( Td, [ PdfFloat xOffset, PdfInt 0 ] ) ->
+                                    if abs xOffset < 20 then
+                                        state
+
+                                    else
+                                        { text = state.text, canMerge = False }
+
+                                ( Td, [ PdfInt xOffset, PdfInt 0 ] ) ->
+                                    if abs xOffset < 20 then
+                                        state
+
+                                    else
+                                        { text = state.text, canMerge = False }
+
+                                ( Tj, [ Text text2 ] ) ->
+                                    mergeOrAppend text2 state
+
+                                ( Tj, [ HexString text2 ] ) ->
+                                    mergeOrAppend (hexStringToString font text2) state
+
+                                ( SingleQuote, [ Text text2 ] ) ->
+                                    mergeOrAppend text2 state
+
+                                ( SingleQuote, [ HexString text2 ] ) ->
+                                    mergeOrAppend (hexStringToString font text2) state
+
+                                ( DoubleQuote, [ _, _, Text text2 ] ) ->
+                                    mergeOrAppend text2 state
+
+                                ( DoubleQuote, [ _, _, HexString text2 ] ) ->
+                                    mergeOrAppend (hexStringToString font text2) state
+
+                                ( TJ, variable ) ->
+                                    { text =
+                                        List.filterMap
+                                            (\a ->
+                                                case a of
+                                                    Text text2 ->
+                                                        Just text2
+
+                                                    HexString text2 ->
+                                                        hexStringToString font text2 |> Just
+
+                                                    _ ->
+                                                        Nothing
+                                            )
+                                            variable
+                                            |> Array.fromList
+                                            |> Array.append state.text
+                                    , canMerge = True
+                                    }
+
+                                ( BDC, _ ) ->
+                                    state
+
+                                ( EMC, _ ) ->
+                                    state
+
+                                ( BMC, _ ) ->
+                                    state
+
+                                ( MP, _ ) ->
+                                    state
+
+                                ( DP, _ ) ->
+                                    state
+
+                                _ ->
+                                    { text = state.text, canMerge = False }
+                        )
+                        { text = Array.empty, canMerge = False }
+                        drawingInstructions
+                        |> .text
+                        |> Array.toList
+                        |> Ok
+                        |> Tuple.pair sections4
+
+                ( sections4, Ok _ ) ->
+                    ( sections4
                     , Err
                         [ { row = 0
                           , col = 0
-                          , problem = Parser.Expecting "32"
+                          , problem = Parser.Expecting "1"
                           }
                         ]
                     )
 
-        _ ->
-            ( sections
+                ( sections4, Err error ) ->
+                    ( sections4, Err error )
+
+        ( _, ( sections3, _ ) ) ->
+            ( sections3
             , Err
                 [ { row = 0
                   , col = 0
-                  , problem = Parser.Expecting "3"
+                  , problem = Parser.Expecting "Expecting contents and resources obj"
                   }
                 ]
             )
