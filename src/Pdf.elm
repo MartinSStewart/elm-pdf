@@ -828,6 +828,25 @@ getPageContents config sections2 pageSection =
                                         Array.push text2 state.text
                             , canMerge = True
                             }
+
+                        handleTj : List Object -> List String
+                        handleTj values =
+                            List.concatMap
+                                (\a ->
+                                    case a of
+                                        PdfArray array ->
+                                            handleTj (Array.toList array)
+
+                                        Text text2 ->
+                                            [ text2 ]
+
+                                        HexString text2 ->
+                                            [ hexStringToString font text2 ]
+
+                                        _ ->
+                                            []
+                                )
+                                values
                     in
                     List.foldl
                         (\instruction state ->
@@ -865,22 +884,7 @@ getPageContents config sections2 pageSection =
                                     mergeOrAppend (hexStringToString font text2) state
 
                                 ( TJ, variable ) ->
-                                    { text =
-                                        List.filterMap
-                                            (\a ->
-                                                case a of
-                                                    Text text2 ->
-                                                        Just text2
-
-                                                    HexString text2 ->
-                                                        hexStringToString font text2 |> Just
-
-                                                    _ ->
-                                                        Nothing
-                                            )
-                                            variable
-                                            |> Array.fromList
-                                            |> Array.append state.text
+                                    { text = Array.push (handleTj variable |> String.concat) state.text
                                     , canMerge = True
                                     }
 
@@ -2206,6 +2210,31 @@ type alias EncryptionData =
     { key : Bytes
     , reference : IndirectReference_
     }
+
+
+abcd =
+    Ok
+        (DrawingInstructions
+            [ { operator = QLowercase, parameters = [] }
+            , { operator = Q, parameters = [] }
+            , { operator = QLowercase, parameters = [] }
+            , { operator = ReLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfFloat 595.2756, PdfFloat 841.8898 ] }
+            , { operator = W, parameters = [] }
+            , { operator = NLowercase, parameters = [] }
+            , { operator = CsLowercase, parameters = [ Name "Cs1" ] }
+            , { operator = ScLowercase, parameters = [ PdfInt 0, PdfInt 0, PdfInt 0 ] }
+            , { operator = BT, parameters = [] }
+            , { operator = Tm, parameters = [ PdfInt 14, PdfInt 0, PdfInt 0, PdfInt 14, PdfFloat 221.4864, PdfFloat 799.3204 ] }
+            , { operator = Tf, parameters = [ Name "TT1", PdfInt 1 ] }
+            , { operator = TJ, parameters = [ PdfArray (Array.fromList [ Text "Rd", PdfInt 55, Text "SA", PdfInt 55, Text "P Ev", PdfInt 56, Text "i", PdfInt 56, Text "d", PdfInt 55, Text "en", PdfInt 55, Text "c", PdfInt 56, Text "e Rep", PdfInt 55, Text "o", PdfInt 55, Text "r", PdfInt 56, Text "t" ]) ] }
+            , { operator = ET, parameters = [] }
+            , { operator = QLowercase, parameters = [] }
+            , { operator = CmLowercase, parameters = [ PdfFloat 536.2756, PdfInt 0, PdfInt 0, PdfFloat 401.9513, PdfInt 30, PdfFloat 363.9384 ] }
+            , { operator = Do, parameters = [ Name "Im1" ] }
+            , { operator = Q, parameters = [] }
+            , { operator = Q, parameters = [] }
+            ]
+        )
 
 
 streamParser :
